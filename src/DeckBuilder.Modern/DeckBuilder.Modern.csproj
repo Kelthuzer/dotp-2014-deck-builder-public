@@ -1,0 +1,67 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AssemblyName>DotP 2014 Deck Builder Modern</AssemblyName>
+    <RootNamespace>DeckBuilder.Modern</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(BuildIdentifier)' != ''">
+    <AssemblyMetadata Include="BuildIdentifier" Value="$(BuildIdentifier)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DeckBuilder.Core\DeckBuilder.Core.csproj" />
+    <ProjectReference Include="..\DeckBuilder.GameData\DeckBuilder.GameData.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\Mana\*.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\..\DotP 2014 Deck Builder\squish_64.dll" Link="squish_64.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </Content>
+
+    <!-- Custom deck-box templates live in their own output folders.
+         For now only the proven legacy A template is active. -->
+    <Content Include="..\..\DotP 2014 Deck Builder\Images\D14_DeckBoxOverlay.png" Link="Images\DeckBoxTemplates\A\D14_DeckBoxOverlay.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </Content>
+    <Content Include="..\..\DotP 2014 Deck Builder\Images\D14_DeckBoxMask.png" Link="Images\DeckBoxTemplates\A\D14_DeckBoxMask.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </Content>
+    <Content Include="..\..\DotP 2014 Deck Builder\Images\D14_DeckBoxAlpha.png" Link="Images\DeckBoxTemplates\A\D14_DeckBoxAlpha.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <LegacyWadDependency Include="..\..\DotP 2014 Deck Builder\References\Gibbed.Duels.FileFormats.dll" />
+    <LegacyWadDependency Include="..\..\DotP 2014 Deck Builder\References\Gibbed.IO.dll" />
+    <LegacyWadDependency Include="..\..\DotP 2014 Deck Builder\References\Gibbed.Squish.dll" />
+    <LegacyWadDependency Include="..\..\DotP 2014 Deck Builder\References\ICSharpCode.SharpZipLib.dll" />
+  </ItemGroup>
+
+  <Target Name="CopyLegacyWadDependenciesToBuild" AfterTargets="Build">
+    <Copy SourceFiles="@(LegacyWadDependency)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CopyLegacyWadDependenciesToPublish" AfterTargets="Publish">
+    <Copy SourceFiles="@(LegacyWadDependency)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

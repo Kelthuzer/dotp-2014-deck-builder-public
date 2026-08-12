@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/DeckBuilder.Core/DeckBuilder.Core.csproj" />
+    <ProjectReference Include="../../src/DeckBuilder.GameData/DeckBuilder.GameData.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="Gibbed.Duels.FileFormats">
+      <HintPath>../../DotP 2014 Deck Builder/References/Gibbed.Duels.FileFormats.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Gibbed.IO">
+      <HintPath>../../DotP 2014 Deck Builder/References/Gibbed.IO.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Gibbed.Squish">
+      <HintPath>../../DotP 2014 Deck Builder/References/Gibbed.Squish.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="ICSharpCode.SharpZipLib">
+      <HintPath>../../DotP 2014 Deck Builder/References/ICSharpCode.SharpZipLib.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <LegacyWadDependency Include="../../DotP 2014 Deck Builder/References/Gibbed.Duels.FileFormats.dll" />
+    <LegacyWadDependency Include="../../DotP 2014 Deck Builder/References/Gibbed.IO.dll" />
+    <LegacyWadDependency Include="../../DotP 2014 Deck Builder/References/Gibbed.Squish.dll" />
+    <LegacyWadDependency Include="../../DotP 2014 Deck Builder/References/ICSharpCode.SharpZipLib.dll" />
+  </ItemGroup>
+  <Target Name="CopyLegacyWadDependencies" AfterTargets="Build">
+    <Copy SourceFiles="@(LegacyWadDependency)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

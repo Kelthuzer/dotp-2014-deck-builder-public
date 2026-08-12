@@ -1,0 +1,116 @@
+<Window x:Class="DeckBuilder.Modern.VersionPackagesWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Version Extractor / Builder"
+        Width="1180" Height="760" MinWidth="930" MinHeight="620"
+        WindowStartupLocation="CenterOwner">
+  <DockPanel Margin="12">
+    <Border DockPanel.Dock="Top" Background="White" BorderBrush="{StaticResource BorderBrush}"
+            BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,0,0,10">
+      <StackPanel>
+        <TextBlock Text="Magic 2014 Version Extractor / Builder" FontSize="20" FontWeight="SemiBold" />
+        <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Foreground="#FF555555"
+                   Text="Extract several game installations into editable version packages, or build new card/deck WADs from unpacked content." />
+      </StackPanel>
+    </Border>
+
+    <StatusBar DockPanel.Dock="Bottom" Margin="0,10,0,0">
+      <StatusBarItem>
+        <TextBlock x:Name="StatusText" Text="Ready" />
+      </StatusBarItem>
+    </StatusBar>
+
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="10" />
+        <RowDefinition Height="*" />
+        <RowDefinition Height="10" />
+        <RowDefinition Height="150" />
+      </Grid.RowDefinitions>
+
+      <Border Background="White" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="10">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="145" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+          </Grid.RowDefinitions>
+
+          <TextBlock Text="Game version folder" VerticalAlignment="Center" Margin="0,0,8,7" />
+          <TextBox x:Name="SourceFolderText" Grid.Column="1" Margin="0,0,8,7" />
+          <Button Grid.Column="2" Content="Browse…" Padding="14,5" Margin="0,0,0,7" Click="BrowseSource_Click" />
+
+          <TextBlock Grid.Row="1" Text="Workspace" VerticalAlignment="Center" Margin="0,0,8,7" />
+          <TextBox x:Name="WorkspaceText" Grid.Row="1" Grid.Column="1" Margin="0,0,8,7" />
+          <Button Grid.Row="1" Grid.Column="2" Content="Browse…" Padding="14,5" Margin="0,0,0,7" Click="BrowseWorkspace_Click" />
+
+          <TextBlock Grid.Row="2" Text="Version name" VerticalAlignment="Center" Margin="0,0,8,7" />
+          <TextBox x:Name="VersionNameText" Grid.Row="2" Grid.Column="1" Margin="0,0,8,7"
+                   ToolTip="Example: vanilla-clean, 2012-2013-import, 8192-fixes" />
+          <Button Grid.Row="2" Grid.Column="2" x:Name="ExtractButton" Content="Extract version" Padding="14,5"
+                  Margin="0,0,0,7" Click="Extract_Click" />
+
+          <TextBlock Grid.Row="3" Text="Build output root" VerticalAlignment="Center" Margin="0,0,8,0" />
+          <TextBox x:Name="BuildRootText" Grid.Row="3" Grid.Column="1" Margin="0,0,8,0" />
+          <Button Grid.Row="3" Grid.Column="2" Content="Browse…" Padding="14,5" Click="BrowseBuildRoot_Click" />
+        </Grid>
+      </Border>
+
+      <Border Grid.Row="2" Background="White" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+              CornerRadius="6" Padding="10">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+          </Grid.RowDefinitions>
+
+          <DockPanel Margin="0,0,0,8">
+            <TextBlock Text="Extracted versions" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+            <Button DockPanel.Dock="Right" Content="Refresh" Padding="14,5" Click="Refresh_Click" />
+          </DockPanel>
+
+          <DataGrid x:Name="PackagesGrid" Grid.Row="1" IsReadOnly="True" AutoGenerateColumns="False"
+                    SelectionMode="Single">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="Version" Binding="{Binding VersionName}" Width="1.25*" />
+              <DataGridTextColumn Header="Created" Binding="{Binding CreatedText}" Width="135" />
+              <DataGridTextColumn Header="WADs" Binding="{Binding WadCount}" Width="62" />
+              <DataGridTextColumn Header="Files" Binding="{Binding FileCount}" Width="72" />
+              <DataGridTextColumn Header="Source size" Binding="{Binding SizeText}" Width="92" />
+              <DataGridTextColumn Header="Original game folder" Binding="{Binding SourceGameDirectory}" Width="2*" />
+              <DataGridTextColumn Header="Package folder" Binding="{Binding PackageDirectory}" Width="2*" />
+            </DataGrid.Columns>
+          </DataGrid>
+
+          <DockPanel Grid.Row="2" Margin="0,8,0,0">
+            <CheckBox x:Name="IncludeIgnoredCheckBox" Content="Build ignored/helper WADs too" IsChecked="True"
+                      VerticalAlignment="Center" />
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+              <Button Content="Build cards/decks from unpacked…" Padding="14,6" Click="BuildUnpacked_Click" />
+              <Button Content="Open package folder" Padding="14,6" Margin="8,0,0,0" Click="OpenPackage_Click" />
+              <Button x:Name="BuildSelectedButton" Content="Rebuild selected version" Padding="14,6" Margin="8,0,0,0"
+                      Click="BuildSelected_Click" />
+              <Button x:Name="BuildAllButton" Content="Rebuild all versions" Padding="14,6" Margin="8,0,0,0"
+                      Click="BuildAll_Click" />
+            </StackPanel>
+          </DockPanel>
+        </Grid>
+      </Border>
+
+      <Border Grid.Row="4" Background="White" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+              CornerRadius="6" Padding="8">
+        <TextBox x:Name="LogText" IsReadOnly="True" TextWrapping="NoWrap"
+                 VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                 FontFamily="Consolas" FontSize="12" />
+      </Border>
+    </Grid>
+  </DockPanel>
+</Window>

@@ -1,0 +1,93 @@
+<Window x:Class="DeckBuilder.Modern.UnpackedContentBuilderWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Build WADs from unpacked content"
+        Width="900" Height="620" MinWidth="780" MinHeight="540"
+        WindowStartupLocation="CenterOwner">
+  <DockPanel Margin="12">
+    <Border DockPanel.Dock="Top" Background="White" BorderBrush="{StaticResource BorderBrush}"
+            BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,0,0,10">
+      <StackPanel>
+        <TextBlock Text="Build cards / decks from unpacked files" FontSize="20" FontWeight="SemiBold" />
+        <TextBlock Margin="0,5,0,0" TextWrapping="Wrap" Foreground="#FF555555"
+                   Text="Select the workspace root (for example D:\Games\WAD) to aggregate every extracted version below it, or select one extracted version / plain unpacked folder. Differing variants are shown before build so you can choose which card or deck definition is used." />
+      </StackPanel>
+    </Border>
+
+    <StatusBar DockPanel.Dock="Bottom" Margin="0,10,0,0">
+      <StatusBarItem><TextBlock x:Name="StatusText" Text="Ready" /></StatusBarItem>
+    </StatusBar>
+
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="10" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="10" />
+        <RowDefinition Height="*" />
+      </Grid.RowDefinitions>
+
+      <Border Background="White" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="10">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="150" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+          </Grid.RowDefinitions>
+
+          <TextBlock Text="Unpacked source" VerticalAlignment="Center" Margin="0,0,8,7" />
+          <TextBox x:Name="SourceFolderText" Grid.Column="1" Margin="0,0,8,7"
+                   ToolTip="Workspace root scans all extracted version packages recursively." />
+          <Button Grid.Column="2" Content="Browse…" Padding="14,5" Margin="0,0,0,7" Click="BrowseSource_Click" />
+
+          <TextBlock Grid.Row="1" Text="Output folder" VerticalAlignment="Center" Margin="0,0,8,7" />
+          <TextBox x:Name="OutputFolderText" Grid.Row="1" Grid.Column="1" Margin="0,0,8,7" />
+          <Button Grid.Row="1" Grid.Column="2" Content="Browse…" Padding="14,5" Margin="0,0,0,7" Click="BrowseOutput_Click" />
+
+          <TextBlock Grid.Row="2" Text="WAD order" VerticalAlignment="Center" Margin="0,0,8,0" />
+          <TextBox x:Name="OrderText" Grid.Row="2" Grid.Column="1" Width="90" HorizontalAlignment="Left" Text="50"
+                   ToolTip="Higher order overrides lower-order game WADs." />
+        </Grid>
+      </Border>
+
+      <Border Grid.Row="2" Background="White" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="10">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="160" />
+            <ColumnDefinition Width="*" />
+          </Grid.ColumnDefinitions>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+          </Grid.RowDefinitions>
+
+          <CheckBox x:Name="BuildCardsCheckBox" Content="Build cards WAD" IsChecked="True" VerticalAlignment="Center" Margin="0,0,8,8" />
+          <TextBox x:Name="CardsWadNameText" Grid.Column="1" Text="Data_DLC_9000_Cards.wad" Margin="0,0,0,8" />
+
+          <CheckBox x:Name="BuildDecksCheckBox" Grid.Row="1" Content="Build decks WAD" IsChecked="True" VerticalAlignment="Center" Margin="0,0,8,8" />
+          <TextBox x:Name="DecksWadNameText" Grid.Row="1" Grid.Column="1" Text="Data_Decks_9000_Custom.wad" Margin="0,0,0,8" />
+
+          <TextBlock Grid.Row="2" Grid.ColumnSpan="2" TextWrapping="Wrap" Foreground="#FF555555" Margin="0,2,0,8"
+                     Text="Cards WAD: CARDS plus discovered card illustration resources. Decks WAD: DECKS, UNLOCKS, AI_PERSONALITIES, deck textures and TEXT_PERMANENT. All source versions are recorded in a .sources.json manifest. Original extracted files are never changed." />
+
+          <StackPanel Grid.Row="3" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="OpenOutputButton" Content="Open output folder" Padding="14,6" Click="OpenOutput_Click" />
+            <Button x:Name="BuildButton" Content="Build selected content" Padding="18,6" Margin="8,0,0,0" Click="Build_Click" />
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <Border Grid.Row="4" Background="White" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="8">
+        <TextBox x:Name="LogText" IsReadOnly="True" FontFamily="Consolas" FontSize="12"
+                 TextWrapping="NoWrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" />
+      </Border>
+    </Grid>
+  </DockPanel>
+</Window>
