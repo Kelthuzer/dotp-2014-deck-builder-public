@@ -1,0 +1,143 @@
+<Window x:Class="DeckBuilder.Modern.WadWorkshopWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="WAD Workshop"
+        Width="1320" Height="820" MinWidth="1050" MinHeight="650"
+        WindowStartupLocation="CenterOwner">
+  <DockPanel Margin="12">
+    <Border DockPanel.Dock="Top" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+            CornerRadius="6" Padding="10" Margin="0,0,0,10" Background="White">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+        <StackPanel>
+          <TextBlock Text="WAD Workshop" FontSize="20" FontWeight="SemiBold" />
+          <TextBlock x:Name="SummaryText" Margin="0,4,0,0" TextWrapping="Wrap"
+                     Text="Scan game WADs to build an effective card pool and validate installed decks." />
+          <TextBlock x:Name="PathText" Margin="0,3,0,0" Foreground="#FF666666" TextWrapping="Wrap" />
+        </StackPanel>
+        <Button Grid.Column="1" x:Name="RescanButton" Content="Rescan" Padding="18,7"
+                VerticalAlignment="Center" Click="Rescan_Click" />
+      </Grid>
+    </Border>
+
+    <StatusBar DockPanel.Dock="Bottom" Margin="0,10,0,0">
+      <StatusBarItem>
+        <TextBlock x:Name="StatusText" Text="Ready" />
+      </StatusBarItem>
+    </StatusBar>
+
+    <TabControl>
+      <TabItem Header="WADs">
+        <DataGrid x:Name="WadsGrid" IsReadOnly="True" AutoGenerateColumns="False" Margin="8">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="WAD" Binding="{Binding Name}" Width="2*" />
+            <DataGridTextColumn Header="State" Binding="{Binding LoadState}" Width="78" />
+            <DataGridTextColumn Header="Order" Binding="{Binding PrimaryOrder}" Width="60" />
+            <DataGridTextColumn Header="Size" Binding="{Binding SizeText}" Width="92" />
+            <DataGridTextColumn Header="Cards" Binding="{Binding CardDefinitions}" Width="68" />
+            <DataGridTextColumn Header="Art" Binding="{Binding Illustrations}" Width="68" />
+            <DataGridTextColumn Header="Deck art" Binding="{Binding DeckImages}" Width="72" />
+            <DataGridTextColumn Header="Decks" Binding="{Binding DeckFiles}" Width="68" />
+            <DataGridTextColumn Header="Unlocks" Binding="{Binding UnlockFiles}" Width="72" />
+            <DataGridTextColumn Header="AI" Binding="{Binding Personalities}" Width="58" />
+            <DataGridTextColumn Header="SHA256" Binding="{Binding ShaShort}" Width="105" />
+            <DataGridTextColumn Header="Notes" Binding="{Binding Notes}" Width="2*" />
+          </DataGrid.Columns>
+        </DataGrid>
+      </TabItem>
+
+      <TabItem Header="Card pool">
+        <Grid Margin="8">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+          </Grid.RowDefinitions>
+          <TextBox x:Name="CardPoolSearchBox" Margin="0,0,0,8"
+                   ToolTip="Search card name, reference, WAD or status"
+                   TextChanged="CardPoolSearchBox_TextChanged" />
+          <DataGrid x:Name="CardPoolGrid" Grid.Row="1" IsReadOnly="True" AutoGenerateColumns="False"
+                    SelectionChanged="CardPoolGrid_SelectionChanged">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="Card" Binding="{Binding DisplayName}" Width="1.6*" />
+              <DataGridTextColumn Header="Reference" Binding="{Binding Reference}" Width="1.35*" />
+              <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="155" />
+              <DataGridTextColumn Header="Effective WAD" Binding="{Binding EffectiveSource}" Width="1.25*" />
+              <DataGridTextColumn Header="Order" Binding="{Binding EffectiveOrder}" Width="58" />
+              <DataGridTextColumn Header="Defs" Binding="{Binding DefinitionCount}" Width="55" />
+              <DataGridTextColumn Header="Art WADs" Binding="{Binding ArtSourceCount}" Width="70" />
+            </DataGrid.Columns>
+          </DataGrid>
+          <TextBox x:Name="CardDetailsText" Grid.Row="2" Margin="0,8,0,0" Height="86"
+                   IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" />
+        </Grid>
+      </TabItem>
+
+      <TabItem Header="Decks">
+        <Grid Margin="8">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+          </Grid.RowDefinitions>
+          <TextBox x:Name="DeckSearchBox" Margin="0,0,0,8"
+                   ToolTip="Search deck name, UID, WAD or health status"
+                   TextChanged="DeckSearchBox_TextChanged" />
+          <DataGrid x:Name="DecksGrid" Grid.Row="1" IsReadOnly="True" AutoGenerateColumns="False"
+                    SelectionChanged="DecksGrid_SelectionChanged" MouseDoubleClick="DecksGrid_MouseDoubleClick">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="Deck" Binding="{Binding DisplayName}" Width="1.6*" />
+              <DataGridTextColumn Header="UID" Binding="{Binding Uid}" Width="74" />
+              <DataGridTextColumn Header="WAD" Binding="{Binding Source}" Width="1.35*" />
+              <DataGridTextColumn Header="Main" Binding="{Binding MainCards}" Width="58" />
+              <DataGridTextColumn Header="Unlock" Binding="{Binding RegularUnlocks}" Width="60" />
+              <DataGridTextColumn Header="Promo" Binding="{Binding PromoUnlocks}" Width="58" />
+              <DataGridTextColumn Header="Missing defs" Binding="{Binding MissingDefinitions}" Width="82" />
+              <DataGridTextColumn Header="Missing art" Binding="{Binding MissingArt}" Width="78" />
+              <DataGridTextColumn Header="Ambiguous" Binding="{Binding AmbiguousReferences}" Width="78" />
+              <DataGridTextColumn Header="Overrides" Binding="{Binding OverriddenReferences}" Width="72" />
+              <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="120" />
+            </DataGrid.Columns>
+          </DataGrid>
+          <TextBox x:Name="DeckProblemsText" Grid.Row="2" Margin="0,8,0,0" Height="86"
+                   IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" />
+          <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+            <Button Content="Open selected deck as project" Padding="16,7" Click="OpenSelectedDeck_Click" />
+            <Button Content="Close" Padding="16,7" Margin="8,0,0,0" Click="Close_Click" />
+          </StackPanel>
+        </Grid>
+      </TabItem>
+
+      <TabItem Header="Conflicts">
+        <Grid Margin="8">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+          </Grid.RowDefinitions>
+          <TextBox x:Name="ConflictSearchBox" Margin="0,0,0,8"
+                   ToolTip="Search conflicting or unresolved card references"
+                   TextChanged="ConflictSearchBox_TextChanged" />
+          <DataGrid x:Name="ConflictsGrid" Grid.Row="1" IsReadOnly="True" AutoGenerateColumns="False"
+                    SelectionChanged="ConflictsGrid_SelectionChanged">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="Card" Binding="{Binding DisplayName}" Width="1.5*" />
+              <DataGridTextColumn Header="Reference" Binding="{Binding Reference}" Width="1.3*" />
+              <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="180" />
+              <DataGridTextColumn Header="Effective WAD" Binding="{Binding EffectiveSource}" Width="1.2*" />
+              <DataGridTextColumn Header="Order" Binding="{Binding EffectiveOrder}" Width="58" />
+              <DataGridTextColumn Header="Definitions" Binding="{Binding DefinitionCount}" Width="72" />
+              <DataGridTextColumn Header="Art WADs" Binding="{Binding ArtSourceCount}" Width="70" />
+            </DataGrid.Columns>
+          </DataGrid>
+          <TextBox x:Name="ConflictDetailsText" Grid.Row="2" Margin="0,8,0,0" Height="105"
+                   IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" />
+        </Grid>
+      </TabItem>
+    </TabControl>
+  </DockPanel>
+</Window>

@@ -1,0 +1,31 @@
+*.user
+*.suo
+*.DotSettings
+Bin/
+obj/
+TestResults
+*.dbmdl
+*.log
+*.VisualState.xml
+TestResult.xml
+packages/
+.vs
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+secrets.json
+secrets.*.json
+credentials.json
+credentials*.json
+*.credentials
+*.pfx
+*.p12
+*.p8
+*.pem
+*.key
+*.snk
+
+# Local build/publish output
+artifacts/

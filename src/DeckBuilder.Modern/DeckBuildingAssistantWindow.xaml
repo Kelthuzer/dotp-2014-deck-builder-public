@@ -1,0 +1,36 @@
+<Window x:Class="DeckBuilder.Modern.DeckBuildingAssistantWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Deck building assistant" Width="680" Height="590" MinWidth="600" MinHeight="520"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip">
+  <Grid Margin="18">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" MinHeight="300" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+
+    <TextBlock Text="Deck building assistant" FontSize="22" FontWeight="SemiBold" />
+    <TextBlock Grid.Row="1" Margin="0,6,0,14" TextWrapping="Wrap" Foreground="#FF555555"
+               Text="The assistant analyzes the current deck automatically: size, lands, mana curve, colored requirements and deck rules." />
+
+    <GroupBox Grid.Row="2" Header="Current deck guidance" Padding="10" Margin="0,0,0,12">
+      <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <TextBlock x:Name="GuidanceText" TextWrapping="Wrap" FontFamily="Segoe UI" LineHeight="19" />
+      </ScrollViewer>
+    </GroupBox>
+
+    <TextBlock Grid.Row="3" Margin="0,0,0,14" TextWrapping="Wrap" Foreground="#FF666666"
+               Text="Reference model: 60-card constructed deck; mana base adjusted by curve and colored requirements." />
+
+    <Grid Grid.Row="4">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*" />
+        <ColumnDefinition Width="Auto" />
+      </Grid.ColumnDefinitions>
+      <Button Grid.Column="1" Content="Close" Width="110" IsDefault="True" IsCancel="True" />
+    </Grid>
+  </Grid>
+</Window>

@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DeckBuilder.Core\DeckBuilder.Core.csproj" />
+    <Reference Include="Gibbed.Duels.FileFormats">
+      <HintPath>..\..\DotP 2014 Deck Builder\References\Gibbed.Duels.FileFormats.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Gibbed.IO">
+      <HintPath>..\..\DotP 2014 Deck Builder\References\Gibbed.IO.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Gibbed.Squish">
+      <HintPath>..\..\DotP 2014 Deck Builder\References\Gibbed.Squish.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="ICSharpCode.SharpZipLib">
+      <HintPath>..\..\DotP 2014 Deck Builder\References\ICSharpCode.SharpZipLib.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+</Project>
