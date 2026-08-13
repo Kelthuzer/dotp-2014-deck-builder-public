@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using DeckBuilder.Core.Models;
 using DeckBuilder.GameData;
 using Microsoft.VisualBasic.FileIO;
 
@@ -16,15 +17,23 @@ public partial class WorkspaceArtCleanupWindow : Window
 {
     private readonly string _workspaceDirectory;
     private readonly GameCardImageLoader? _imageLoader;
-    private readonly ObservableCollection<ArtDuplicateRow> _rows = new();
-    private IReadOnlyList<ArtDuplicateRow> _allRows = Array.Empty<ArtDuplicateRow>();
+    private readonly HashSet<string> _usedIllustrationIds;
+    private readonly ObservableCollection<ArtCleanupRow> _rows = new();
+    private IReadOnlyList<ArtCleanupRow> _allRows = Array.Empty<ArtCleanupRow>();
     private int _previewVersion;
 
-    public WorkspaceArtCleanupWindow(string workspaceDirectory, GameCardImageLoader? imageLoader = null)
+    public WorkspaceArtCleanupWindow(
+        string workspaceDirectory,
+        IReadOnlyList<CardRecord>? catalog = null,
+        GameCardImageLoader? imageLoader = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(workspaceDirectory);
         _workspaceDirectory = Path.GetFullPath(workspaceDirectory);
         _imageLoader = imageLoader;
+        _usedIllustrationIds = (catalog ?? Array.Empty<CardRecord>())
+            .Select(card => NormalizeId(card.ImageId))
+            .Where(id => id.Length > 0)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         InitializeComponent();
         ArtGrid.ItemsSource = _rows;
         Loaded += async (_, _) => await ScanAsync();
@@ -33,10 +42,10 @@ public partial class WorkspaceArtCleanupWindow : Window
     private async Task ScanAsync()
     {
         IsEnabled = false;
-        SummaryText.Text = "Scanning TDX art for exact duplicates…";
+        SummaryText.Text = "Scanning workspace TDX resources…";
         try
         {
-            _allRows = await Task.Run(() => FindDuplicates(_workspaceDirectory));
+            _allRows = await Task.Run(() => FindArt(_workspaceDirectory, _usedIllustrationIds));
             ApplyFilter();
         }
         catch (Exception exception)
@@ -50,7 +59,7 @@ public partial class WorkspaceArtCleanupWindow : Window
         }
     }
 
-    private static IReadOnlyList<ArtDuplicateRow> FindDuplicates(string root)
+    private static IReadOnlyList<ArtCleanupRow> FindArt(string root, IReadOnlySet<string> usedIllustrationIds)
     {
         List<FileCandidate> candidates = Directory
             .EnumerateFiles(root, "*.tdx", System.IO.SearchOption.AllDirectories)
@@ -58,9 +67,37 @@ public partial class WorkspaceArtCleanupWindow : Window
             .Select(path => new FileCandidate(path, new FileInfo(path).Length))
             .ToList();
 
-        List<ArtDuplicateRow> result = new();
-        int groupNumber = 1;
+        Dictionary<string, DuplicateInfo> duplicateInfo = BuildDuplicateInfo(candidates);
+        List<ArtCleanupRow> result = new(candidates.Count);
+        foreach (FileCandidate candidate in candidates.OrderBy(item => item.Path, StringComparer.OrdinalIgnoreCase))
+        {
+            duplicateInfo.TryGetValue(candidate.Path, out DuplicateInfo? duplicate);
+            string relative = Path.GetRelativePath(root, candidate.Path);
+            GameImageKind kind = InferArtKind(relative);
+            string imageId = NormalizeId(Path.GetFileNameWithoutExtension(candidate.Path));
+            bool isIllustration = kind == GameImageKind.Illustration;
+            bool isUnusedIllustration = isIllustration && !usedIllustrationIds.Contains(imageId);
+            int usedBy = isIllustration && usedIllustrationIds.Contains(imageId) ? 1 : 0;
 
+            result.Add(new ArtCleanupRow(
+                duplicate?.GroupKey,
+                duplicate?.GroupNumber,
+                candidate.Path,
+                relative,
+                candidate.Length,
+                kind,
+                imageId,
+                isUnusedIllustration,
+                usedBy));
+        }
+
+        return result;
+    }
+
+    private static Dictionary<string, DuplicateInfo> BuildDuplicateInfo(IReadOnlyList<FileCandidate> candidates)
+    {
+        Dictionary<string, DuplicateInfo> result = new(StringComparer.OrdinalIgnoreCase);
+        int groupNumber = 1;
         foreach (IGrouping<long, FileCandidate> sizeGroup in candidates
                      .GroupBy(candidate => candidate.Length)
                      .Where(group => group.Count() > 1)
@@ -83,15 +120,9 @@ public partial class WorkspaceArtCleanupWindow : Window
                          .OrderBy(group => group[0].Path, StringComparer.OrdinalIgnoreCase))
             {
                 string groupKey = $"Art:{groupNumber}";
-                foreach (FileCandidate candidate in duplicateGroup.OrderBy(item => item.Path, StringComparer.OrdinalIgnoreCase))
+                foreach (FileCandidate candidate in duplicateGroup)
                 {
-                    string relative = Path.GetRelativePath(root, candidate.Path);
-                    result.Add(new ArtDuplicateRow(
-                        groupKey,
-                        groupNumber,
-                        candidate.Path,
-                        relative,
-                        candidate.Length));
+                    result[candidate.Path] = new DuplicateInfo(groupKey, groupNumber);
                 }
                 groupNumber++;
             }
@@ -106,65 +137,81 @@ public partial class WorkspaceArtCleanupWindow : Window
         return Convert.ToHexString(SHA256.HashData(input));
     }
 
+    private static string NormalizeId(string? value)
+    {
+        string id = value?.Trim() ?? string.Empty;
+        if (id.EndsWith(".tdx", StringComparison.OrdinalIgnoreCase))
+            id = Path.GetFileNameWithoutExtension(id) ?? id;
+        return id;
+    }
+
     private void Filter_Changed(object sender, TextChangedEventArgs e) => ApplyFilter();
+    private void FilterCheckBox_Changed(object sender, RoutedEventArgs e) => ApplyFilter();
 
     private void ApplyFilter()
     {
         if (!IsLoaded)
-        {
             return;
-        }
 
         string query = SearchBox.Text.Trim();
-        IEnumerable<ArtDuplicateRow> visible = _allRows;
+        IEnumerable<ArtCleanupRow> visible = _allRows;
+
+        if (UnusedOnlyCheckBox.IsChecked == true)
+            visible = visible.Where(row => row.IsUnusedIllustration);
+        if (DuplicatesOnlyCheckBox.IsChecked == true)
+            visible = visible.Where(row => row.IsDuplicate);
+
         if (query.Length > 0)
         {
             visible = visible.Where(row =>
                 row.FileName.Contains(query, StringComparison.CurrentCultureIgnoreCase)
                 || row.Folder.Contains(query, StringComparison.CurrentCultureIgnoreCase)
                 || row.RelativePath.Contains(query, StringComparison.CurrentCultureIgnoreCase)
-                || row.GroupNumber.ToString().Contains(query, StringComparison.OrdinalIgnoreCase));
+                || row.UsageStatus.Contains(query, StringComparison.CurrentCultureIgnoreCase)
+                || row.GroupText.Contains(query, StringComparison.OrdinalIgnoreCase));
         }
 
-        ArtDuplicateRow? previous = ArtGrid.SelectedItem as ArtDuplicateRow;
+        ArtCleanupRow? previous = ArtGrid.SelectedItem as ArtCleanupRow;
         _rows.Clear();
-        foreach (ArtDuplicateRow row in visible
-                     .OrderBy(row => row.GroupNumber)
+        foreach (ArtCleanupRow row in visible
+                     .OrderBy(row => row.IsUnusedIllustration ? 0 : 1)
+                     .ThenBy(row => row.GroupNumber ?? int.MaxValue)
                      .ThenBy(row => row.RelativePath, StringComparer.OrdinalIgnoreCase))
         {
             _rows.Add(row);
         }
 
         if (previous is not null && _rows.Contains(previous))
-        {
             ArtGrid.SelectedItem = previous;
-        }
         else if (_rows.Count > 0)
-        {
             ArtGrid.SelectedIndex = 0;
-        }
 
-        int groups = _allRows.Select(row => row.GroupKey).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+        int groups = _allRows.Where(row => row.IsDuplicate)
+            .Select(row => row.GroupKey)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+        int unused = _allRows.Count(row => row.IsUnusedIllustration);
         int marked = _allRows.Count(row => row.Delete);
-        long reclaimable = _allRows
+        long duplicateReclaimable = _allRows.Where(row => row.IsDuplicate)
             .GroupBy(row => row.GroupKey, StringComparer.OrdinalIgnoreCase)
             .Sum(group => group.Skip(1).Sum(row => row.Length));
-        SummaryText.Text = $"Duplicate groups: {groups:N0}  •  files: {_allRows.Count:N0}  •  marked: {marked:N0}  •  reclaimable: {FormatBytes(reclaimable)}";
+        long unusedBytes = _allRows.Where(row => row.IsUnusedIllustration).Sum(row => row.Length);
+
+        SummaryText.Text = $"Visible: {_rows.Count:N0}  •  TDX: {_allRows.Count:N0}  •  duplicate groups: {groups:N0}  •  unused illustrations: {unused:N0} ({FormatBytes(unusedBytes)})  •  marked: {marked:N0}  •  duplicate reclaimable: {FormatBytes(duplicateReclaimable)}";
     }
 
     private void MarkDuplicates_Click(object sender, RoutedEventArgs e)
     {
         int marked = 0;
-        foreach (IGrouping<string, ArtDuplicateRow> group in _allRows.GroupBy(row => row.GroupKey, StringComparer.OrdinalIgnoreCase))
+        foreach (IGrouping<string, ArtCleanupRow> group in _allRows
+                     .Where(row => row.IsDuplicate)
+                     .GroupBy(row => row.GroupKey!, StringComparer.OrdinalIgnoreCase))
         {
-            ArtDuplicateRow[] ordered = group.OrderBy(row => row.RelativePath, StringComparer.OrdinalIgnoreCase).ToArray();
+            ArtCleanupRow[] ordered = group.OrderBy(row => row.RelativePath, StringComparer.OrdinalIgnoreCase).ToArray();
             for (int index = 0; index < ordered.Length; index++)
             {
                 ordered[index].Delete = index > 0;
-                if (index > 0)
-                {
-                    marked++;
-                }
+                if (index > 0) marked++;
             }
         }
 
@@ -178,19 +225,17 @@ public partial class WorkspaceArtCleanupWindow : Window
 
     private void ClearMarks_Click(object sender, RoutedEventArgs e)
     {
-        foreach (ArtDuplicateRow row in _allRows)
-        {
+        foreach (ArtCleanupRow row in _allRows)
             row.Delete = false;
-        }
         ApplyFilter();
     }
 
     private async void Rescan_Click(object sender, RoutedEventArgs e) => await ScanAsync();
 
     private async void ArtGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
-        await UpdatePreviewAsync(ArtGrid.SelectedItem as ArtDuplicateRow);
+        await UpdatePreviewAsync(ArtGrid.SelectedItem as ArtCleanupRow);
 
-    private async Task UpdatePreviewAsync(ArtDuplicateRow? row)
+    private async Task UpdatePreviewAsync(ArtCleanupRow? row)
     {
         int version = ++_previewVersion;
         PreviewImage.Source = null;
@@ -199,17 +244,27 @@ public partial class WorkspaceArtCleanupWindow : Window
 
         if (row is null)
         {
-            PreviewTitle.Text = "Select duplicate art";
+            PreviewTitle.Text = "Select art";
             PreviewSubtitle.Text = string.Empty;
             PreviewInfo.Text = string.Empty;
+            PreviewUsage.Text = string.Empty;
             PreviewPath.Text = string.Empty;
             return;
         }
 
         PreviewTitle.Text = row.FileName;
-        PreviewSubtitle.Text = $"Duplicate group {row.GroupNumber}  •  {row.Folder}";
-        int copies = _allRows.Count(candidate => candidate.GroupKey.Equals(row.GroupKey, StringComparison.OrdinalIgnoreCase));
-        PreviewInfo.Text = $"Copies: {copies}\nSize per copy: {row.SizeText}";
+        PreviewSubtitle.Text = row.IsDuplicate
+            ? $"{row.UsageStatus}  •  duplicate group {row.GroupNumber}  •  {row.Folder}"
+            : $"{row.UsageStatus}  •  {row.Folder}";
+        int copies = row.IsDuplicate
+            ? _allRows.Count(candidate => candidate.GroupKey!.Equals(row.GroupKey, StringComparison.OrdinalIgnoreCase))
+            : 1;
+        PreviewInfo.Text = $"Kind: {row.Kind}\nCopies: {copies}\nSize: {row.SizeText}";
+        PreviewUsage.Text = row.Kind == GameImageKind.Illustration
+            ? row.IsUnusedIllustration
+                ? "Usage: no loaded card references this illustration ID."
+                : "Usage: referenced by the loaded card catalog."
+            : "Usage: not automatically classified. Frames, mana symbols, deck textures and shared UI textures may be referenced outside card ImageId fields.";
         PreviewPath.Text = row.RelativePath;
 
         if (_imageLoader is null)
@@ -218,29 +273,18 @@ public partial class WorkspaceArtCleanupWindow : Window
             return;
         }
 
-        string imageId = Path.GetFileNameWithoutExtension(row.FullPath);
-        GameImageKind kind = InferArtKind(row.RelativePath);
         try
         {
-            CardImageData? image = await _imageLoader.LoadAsync(imageId, kind);
+            CardImageData? image = await _imageLoader.LoadAsync(row.ImageId, row.Kind);
             if (version != _previewVersion || image is null)
             {
-                if (version == _previewVersion)
-                {
-                    PreviewPlaceholder.Text = "Preview not available";
-                }
+                if (version == _previewVersion) PreviewPlaceholder.Text = "Preview not available";
                 return;
             }
 
             BitmapSource bitmap = BitmapSource.Create(
-                image.Width,
-                image.Height,
-                96,
-                96,
-                PixelFormats.Bgra32,
-                null,
-                image.BgraPixels,
-                checked(image.Width * 4));
+                image.Width, image.Height, 96, 96, PixelFormats.Bgra32,
+                null, image.BgraPixels, checked(image.Width * 4));
             bitmap.Freeze();
             PreviewImage.Source = bitmap;
             PreviewPlaceholder.Visibility = Visibility.Collapsed;
@@ -248,9 +292,7 @@ public partial class WorkspaceArtCleanupWindow : Window
         catch
         {
             if (version == _previewVersion)
-            {
                 PreviewPlaceholder.Text = "Preview not available";
-            }
         }
     }
 
@@ -267,34 +309,43 @@ public partial class WorkspaceArtCleanupWindow : Window
 
     private async void DeleteMarked_Click(object sender, RoutedEventArgs e)
     {
-        ArtDuplicateRow[] selected = _allRows.Where(row => row.Delete).ToArray();
+        ArtCleanupRow[] selected = _allRows.Where(row => row.Delete).ToArray();
         if (selected.Length == 0)
         {
-            MessageBox.Show(this, "Mark one or more duplicate art files first.", "Nothing selected",
+            MessageBox.Show(this, "Mark one or more TDX files first.", "Nothing selected",
                 MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
-        foreach (IGrouping<string, ArtDuplicateRow> group in _allRows.GroupBy(row => row.GroupKey, StringComparer.OrdinalIgnoreCase))
+        foreach (IGrouping<string, ArtCleanupRow> group in _allRows
+                     .Where(row => row.IsDuplicate)
+                     .GroupBy(row => row.GroupKey!, StringComparer.OrdinalIgnoreCase))
         {
-            if (group.All(row => row.Delete))
+            if (group.All(row => row.Delete) && group.Any(row => !row.IsUnusedIllustration))
             {
                 MessageBox.Show(this,
-                    $"Duplicate group {group.First().GroupNumber} has every copy marked. Keep at least one copy.",
+                    $"Duplicate group {group.First().GroupNumber} has every copy marked. Keep at least one copy unless the files are unused illustrations.",
                     "One copy must remain", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
         }
 
-        long bytes = selected.Sum(row => row.Length);
-        MessageBoxResult confirmation = MessageBox.Show(this,
-            $"Send {selected.Length:N0} duplicate TDX file(s) ({FormatBytes(bytes)}) to the Windows Recycle Bin?\n\n" +
-            "At least one byte-identical copy is preserved in every duplicate group.",
-            "Confirm Art Cleanup", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        if (confirmation != MessageBoxResult.Yes)
+        ArtCleanupRow[] uncertain = selected.Where(row => !row.IsUnusedIllustration && !row.IsDuplicate).ToArray();
+        if (uncertain.Length > 0)
         {
+            MessageBox.Show(this,
+                "One or more selected files are neither confirmed unused illustrations nor exact duplicate copies. Clear those marks before deleting.",
+                "Unsafe art selection", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
+
+        long bytes = selected.Sum(row => row.Length);
+        MessageBoxResult confirmation = MessageBox.Show(this,
+            $"Send {selected.Length:N0} TDX file(s) ({FormatBytes(bytes)}) to the Windows Recycle Bin?\n\n" +
+            "Allowed selections are confirmed unused illustration files and/or redundant exact duplicate copies.",
+            "Confirm Art Cleanup", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirmation != MessageBoxResult.Yes)
+            return;
 
         IsEnabled = false;
         try
@@ -302,7 +353,7 @@ public partial class WorkspaceArtCleanupWindow : Window
             List<string> failures = new();
             await Task.Run(() =>
             {
-                foreach (ArtDuplicateRow row in selected)
+                foreach (ArtCleanupRow row in selected)
                 {
                     try
                     {
@@ -344,45 +395,65 @@ public partial class WorkspaceArtCleanupWindow : Window
     }
 
     private sealed record FileCandidate(string Path, long Length);
+    private sealed record DuplicateInfo(string GroupKey, int GroupNumber);
 
-    private sealed class ArtDuplicateRow : INotifyPropertyChanged
+    private sealed class ArtCleanupRow : INotifyPropertyChanged
     {
         private bool _delete;
 
-        public ArtDuplicateRow(string groupKey, int groupNumber, string fullPath, string relativePath, long length)
+        public ArtCleanupRow(
+            string? groupKey,
+            int? groupNumber,
+            string fullPath,
+            string relativePath,
+            long length,
+            GameImageKind kind,
+            string imageId,
+            bool isUnusedIllustration,
+            int usedBy)
         {
             GroupKey = groupKey;
             GroupNumber = groupNumber;
             FullPath = fullPath;
             RelativePath = relativePath;
             Length = length;
+            Kind = kind;
+            ImageId = imageId;
+            IsUnusedIllustration = isUnusedIllustration;
+            UsedBy = usedBy;
         }
 
-        public string GroupKey { get; }
-        public int GroupNumber { get; }
+        public string? GroupKey { get; }
+        public int? GroupNumber { get; }
+        public bool IsDuplicate => GroupNumber.HasValue;
+        public string GroupText => GroupNumber?.ToString() ?? string.Empty;
         public string FullPath { get; }
         public string RelativePath { get; }
         public long Length { get; }
+        public GameImageKind Kind { get; }
+        public string ImageId { get; }
+        public bool IsUnusedIllustration { get; }
+        public int UsedBy { get; }
         public string FileName => Path.GetFileName(FullPath);
         public string Folder => Path.GetFileName(Path.GetDirectoryName(FullPath)) ?? string.Empty;
         public string SizeText => FormatBytes(Length);
+        public string UsedByText => Kind == GameImageKind.Illustration ? UsedBy.ToString() : "—";
+        public string UsageStatus => Kind == GameImageKind.Illustration
+            ? IsUnusedIllustration ? "Unused" : "Used"
+            : IsDuplicate ? "Duplicate" : "Shared";
 
         public bool Delete
         {
             get => _delete;
             set
             {
-                if (_delete == value)
-                {
-                    return;
-                }
+                if (_delete == value) return;
                 _delete = value;
                 OnPropertyChanged();
             }
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;
-
         private void OnPropertyChanged([CallerMemberName] string? propertyName = null) =>
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
