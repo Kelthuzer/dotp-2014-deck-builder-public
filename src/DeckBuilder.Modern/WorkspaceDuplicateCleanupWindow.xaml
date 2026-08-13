@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Deck Cleanup"
-        Width="1380" Height="760" MinWidth="1040" MinHeight="560"
+        Width="1480" Height="800" MinWidth="1120" MinHeight="600"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
   <Grid Margin="14">
     <Grid.RowDefinitions>
@@ -14,43 +14,83 @@
 
     <StackPanel>
       <TextBlock Text="Deck Cleanup" FontSize="20" FontWeight="SemiBold" />
-      <TextBlock Text="Remove any unwanted loose-workspace deck, including tournament/test/scripted decks with only a few cards. You can also switch to exact duplicate deck XML or TDX art. Nothing is removed automatically."
+      <TextBlock Text="Review loose-workspace decks, their cards and unlock sections before deleting them. Duplicate tools are kept separately and nothing is removed automatically."
                  Margin="0,4,0,10" TextWrapping="Wrap" Opacity="0.75" />
     </StackPanel>
 
-    <DockPanel Grid.Row="1" Margin="0,0,0,10">
-      <ComboBox x:Name="CategoryBox" Width="190" SelectionChanged="Filter_Changed">
+    <Grid Grid.Row="1" Margin="0,0,0,10">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="190" />
+        <ColumnDefinition Width="8" />
+        <ColumnDefinition Width="220" />
+        <ColumnDefinition Width="8" />
+        <ColumnDefinition Width="220" />
+        <ColumnDefinition Width="8" />
+        <ColumnDefinition Width="150" />
+        <ColumnDefinition Width="8" />
+        <ColumnDefinition Width="Auto" />
+        <ColumnDefinition Width="*" />
+        <ColumnDefinition Width="Auto" />
+        <ColumnDefinition Width="8" />
+        <ColumnDefinition Width="Auto" />
+        <ColumnDefinition Width="8" />
+        <ColumnDefinition Width="Auto" />
+      </Grid.ColumnDefinitions>
+
+      <ComboBox x:Name="CategoryBox" Grid.Column="0" SelectionChanged="Filter_Changed">
         <ComboBoxItem Content="All decks" Tag="AllDecks" IsSelected="True" />
         <ComboBoxItem Content="Duplicate deck XML" Tag="DuplicateDecks" />
         <ComboBoxItem Content="Duplicate TDX art" Tag="DuplicateArt" />
       </ComboBox>
-      <TextBox x:Name="SearchBox" Margin="8,0,0,0" MinWidth="300"
-               ToolTip="Filter game name, filename or path" TextChanged="Filter_Changed" />
-      <Button DockPanel.Dock="Right" Content="Rescan" Click="Rescan_Click" />
-      <Button DockPanel.Dock="Right" Content="Clear marks" Click="ClearMarks_Click" Margin="0,0,8,0" />
-      <Button DockPanel.Dock="Right" Content="Mark duplicates (keep one)" Click="MarkDuplicates_Click" Margin="0,0,8,0" />
-    </DockPanel>
+
+      <TextBox x:Name="DeckSearchBox" Grid.Column="2"
+               ToolTip="Search deck name, technical filename, UID or path"
+               TextChanged="Filter_Changed" />
+      <TextBox x:Name="CardSearchBox" Grid.Column="4"
+               ToolTip="Search cards contained in main deck, unlocks or promo unlocks"
+               TextChanged="Filter_Changed" />
+
+      <ComboBox x:Name="SortBox" Grid.Column="6" SelectionChanged="Filter_Changed"
+                ToolTip="Sort deck list">
+        <ComboBoxItem Content="Game name" Tag="GameName" IsSelected="True" />
+        <ComboBoxItem Content="UID" Tag="Uid" />
+        <ComboBoxItem Content="Cards" Tag="Cards" />
+        <ComboBoxItem Content="Promo unlocks" Tag="Promo" />
+        <ComboBoxItem Content="File" Tag="File" />
+      </ComboBox>
+
+      <CheckBox x:Name="PromoOnlyCheck" Grid.Column="8" Content="Promo only"
+                VerticalAlignment="Center" Checked="Filter_Changed" Unchecked="Filter_Changed"
+                ToolTip="Show only decks that have promo unlock cards" />
+
+      <Button Grid.Column="10" Content="Mark duplicates (keep one)" Click="MarkDuplicates_Click" />
+      <Button Grid.Column="12" Content="Clear marks" Click="ClearMarks_Click" />
+      <Button Grid.Column="14" Content="Rescan" Click="Rescan_Click" />
+    </Grid>
 
     <Grid Grid.Row="2">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*" />
         <ColumnDefinition Width="12" />
-        <ColumnDefinition Width="330" MinWidth="260" />
+        <ColumnDefinition Width="400" MinWidth="330" />
       </Grid.ColumnDefinitions>
 
       <DataGrid x:Name="DuplicateGrid" Grid.Column="0" AutoGenerateColumns="False"
-                CanUserAddRows="False" SelectionMode="Extended" SelectionUnit="FullRow"
+                CanUserAddRows="False" CanUserSortColumns="False"
+                SelectionMode="Extended" SelectionUnit="FullRow"
                 SelectionChanged="DuplicateGrid_SelectionChanged">
         <DataGrid.Columns>
           <DataGridCheckBoxColumn Header="Delete" Binding="{Binding Delete, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="64" />
           <DataGridTextColumn Header="Dup" Binding="{Binding GroupText}" Width="52" IsReadOnly="True" />
-          <DataGridTextColumn Header="Type" Binding="{Binding Category}" Width="68" IsReadOnly="True" />
-          <DataGridTextColumn Header="Game name" Binding="{Binding FriendlyName}" Width="1.25*" IsReadOnly="True" />
-          <DataGridTextColumn Header="UID" Binding="{Binding UidText}" Width="76" IsReadOnly="True" />
-          <DataGridTextColumn Header="Cards" Binding="{Binding CardsText}" Width="66" IsReadOnly="True" />
-          <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="1.2*" IsReadOnly="True" />
-          <DataGridTextColumn Header="Size" Binding="{Binding SizeText}" Width="82" IsReadOnly="True" />
-          <DataGridTextColumn Header="Path" Binding="{Binding RelativePath}" Width="2*" IsReadOnly="True" />
+          <DataGridTextColumn Header="Type" Binding="{Binding Category}" Width="64" IsReadOnly="True" />
+          <DataGridTextColumn Header="Game name" Binding="{Binding DisplayGameName}" Width="1.35*" IsReadOnly="True" />
+          <DataGridTextColumn Header="UID" Binding="{Binding UidText}" Width="74" IsReadOnly="True" />
+          <DataGridTextColumn Header="Cards" Binding="{Binding CardsText}" Width="62" IsReadOnly="True" />
+          <DataGridTextColumn Header="Unlocks" Binding="{Binding UnlocksText}" Width="70" IsReadOnly="True" />
+          <DataGridTextColumn Header="Promo" Binding="{Binding PromoText}" Width="62" IsReadOnly="True" />
+          <DataGridTextColumn Header="Missing" Binding="{Binding MissingText}" Width="66" IsReadOnly="True" />
+          <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="1.15*" IsReadOnly="True" />
+          <DataGridTextColumn Header="Path" Binding="{Binding RelativePath}" Width="1.8*" IsReadOnly="True" />
         </DataGrid.Columns>
       </DataGrid>
 
@@ -58,6 +98,8 @@
               CornerRadius="6" Padding="12">
         <Grid>
           <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="230" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
@@ -79,10 +121,23 @@
             </Grid>
           </Border>
 
-          <StackPanel Grid.Row="2" Margin="0,10,0,0">
-            <TextBlock x:Name="PreviewInfo" TextWrapping="Wrap" />
-            <TextBlock x:Name="PreviewPath" Margin="0,4,0,0" Opacity="0.65" TextWrapping="Wrap" />
-          </StackPanel>
+          <TextBlock x:Name="PreviewInfo" Grid.Row="2" Margin="0,10,0,8"
+                     TextWrapping="Wrap" />
+
+          <TabControl x:Name="DeckSections" Grid.Row="3">
+            <TabItem x:Name="MainTab" Header="Main">
+              <ListBox x:Name="MainDeckList" />
+            </TabItem>
+            <TabItem x:Name="UnlockTab" Header="Unlocks">
+              <ListBox x:Name="UnlockList" />
+            </TabItem>
+            <TabItem x:Name="PromoTab" Header="Promo">
+              <ListBox x:Name="PromoList" />
+            </TabItem>
+          </TabControl>
+
+          <TextBlock x:Name="PreviewPath" Grid.Row="4" Margin="0,8,0,0"
+                     Opacity="0.65" TextWrapping="Wrap" />
         </Grid>
       </Border>
     </Grid>
