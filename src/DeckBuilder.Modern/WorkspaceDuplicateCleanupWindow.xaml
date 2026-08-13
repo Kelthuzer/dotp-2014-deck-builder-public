@@ -14,7 +14,7 @@
 
     <StackPanel>
       <TextBlock Text="Deck Cleanup" FontSize="20" FontWeight="SemiBold" />
-      <TextBlock Text="Review loose-workspace decks, their cards and unlock sections before deleting them. Duplicate tools are kept separately and nothing is removed automatically."
+      <TextBlock Text="Review loose-workspace decks, their cards, regular unlocks and promo unlocks before deleting them. Use the separate Art Cleanup tool for duplicate TDX files. Nothing is removed automatically."
                  Margin="0,4,0,10" TextWrapping="Wrap" Opacity="0.75" />
     </StackPanel>
 
@@ -40,7 +40,6 @@
       <ComboBox x:Name="CategoryBox" Grid.Column="0" SelectionChanged="Filter_Changed">
         <ComboBoxItem Content="All decks" Tag="AllDecks" IsSelected="True" />
         <ComboBoxItem Content="Duplicate deck XML" Tag="DuplicateDecks" />
-        <ComboBoxItem Content="Duplicate TDX art" Tag="DuplicateArt" />
       </ComboBox>
 
       <TextBox x:Name="DeckSearchBox" Grid.Column="2"
@@ -82,7 +81,6 @@
         <DataGrid.Columns>
           <DataGridCheckBoxColumn Header="Delete" Binding="{Binding Delete, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="64" />
           <DataGridTextColumn Header="Dup" Binding="{Binding GroupText}" Width="52" IsReadOnly="True" />
-          <DataGridTextColumn Header="Type" Binding="{Binding Category}" Width="64" IsReadOnly="True" />
           <DataGridTextColumn Header="Game name" Binding="{Binding DisplayGameName}" Width="1.35*" IsReadOnly="True" />
           <DataGridTextColumn Header="UID" Binding="{Binding UidText}" Width="74" IsReadOnly="True" />
           <DataGridTextColumn Header="Cards" Binding="{Binding CardsText}" Width="62" IsReadOnly="True" />
@@ -106,7 +104,7 @@
           </Grid.RowDefinitions>
 
           <StackPanel>
-            <TextBlock x:Name="PreviewTitle" Text="Select a deck or art file" FontSize="17"
+            <TextBlock x:Name="PreviewTitle" Text="Select a deck" FontSize="17"
                        FontWeight="SemiBold" TextWrapping="Wrap" />
             <TextBlock x:Name="PreviewSubtitle" Margin="0,4,0,10" Opacity="0.65"
                        TextWrapping="Wrap" />
