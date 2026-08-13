@@ -28,6 +28,7 @@ public partial class App : Application
             mainWindow.InstallCatalogTokenFilter();
             mainWindow.InstallCatalogSearchAndSort();
             mainWindow.InstallSettingsMenu();
+            mainWindow.InstallCleanupToolsMenu();
             mainWindow.InstallMultiCardPreview();
             mainWindow.InstallAdaptiveWorkspaceLayout();
             mainWindow.InstallUnifiedMultiPreview();
