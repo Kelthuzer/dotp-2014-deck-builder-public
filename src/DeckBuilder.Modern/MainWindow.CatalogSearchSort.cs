@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using DeckBuilder.Core.Models;
@@ -24,6 +25,7 @@ public partial class MainWindow
 
         SearchBox.Margin = new Thickness(150, 0, 265, 8);
         SearchBox.TextChanged += CatalogSearchText_Changed;
+        AvailableCardsGrid.Sorting += AvailableCardsGrid_Sorting;
 
         _catalogSearchModeComboBox = new ComboBox
         {
@@ -84,6 +86,43 @@ public partial class MainWindow
         searchGrid.Children.Add(sortPanel);
         AppLocalization.Apply(this);
         RefreshCatalogSearchResults();
+    }
+
+    private void AvailableCardsGrid_Sorting(object sender, DataGridSortingEventArgs e)
+    {
+        // Cost is a template column (mana symbols), so WPF has no property to auto-sort by.
+        // Treat clicking its header as the natural numeric sort: converted mana value / mana value.
+        if (!string.Equals(e.Column.Header?.ToString(), "Cost", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        e.Handled = true;
+
+        bool alreadyManaValue = SelectedComboTag(_catalogSortComboBox, "default") == "mana-value";
+        _catalogSortDescending = alreadyManaValue && !_catalogSortDescending;
+        SelectCatalogSort("mana-value");
+
+        foreach (DataGridColumn column in AvailableCardsGrid.Columns)
+            column.SortDirection = null;
+        e.Column.SortDirection = _catalogSortDescending
+            ? ListSortDirection.Descending
+            : ListSortDirection.Ascending;
+
+        if (_catalogSortDirectionButton is not null)
+            _catalogSortDirectionButton.Content = _catalogSortDescending ? "↓" : "↑";
+
+        RefreshCatalogSearchResults();
+    }
+
+    private void SelectCatalogSort(string tag)
+    {
+        if (_catalogSortComboBox is null)
+            return;
+
+        ComboBoxItem? item = _catalogSortComboBox.Items
+            .OfType<ComboBoxItem>()
+            .FirstOrDefault(candidate => string.Equals(candidate.Tag as string, tag, StringComparison.Ordinal));
+        if (item is not null && !ReferenceEquals(_catalogSortComboBox.SelectedItem, item))
+            _catalogSortComboBox.SelectedItem = item;
     }
 
     private void RefreshCatalogSearchResults()
