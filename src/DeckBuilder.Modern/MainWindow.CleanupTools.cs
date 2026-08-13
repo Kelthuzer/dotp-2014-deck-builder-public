@@ -27,6 +27,10 @@ public partial class MainWindow
         decks.Click += CleanupDecksMenu_Click;
         cleanup.Items.Add(decks);
 
+        MenuItem cards = new() { Header = "Cleanup _cards…" };
+        cards.Click += CleanupCardsMenu_Click;
+        cleanup.Items.Add(cards);
+
         MenuItem art = new() { Header = "Cleanup duplicate _art…" };
         art.Click += CleanupArtMenu_Click;
         cleanup.Items.Add(art);
@@ -67,6 +71,23 @@ public partial class MainWindow
         WorkspaceDuplicateCleanupWindow dialog = new(
             workspaceDirectory,
             _installedDecks,
+            _cardImageLoader)
+        {
+            Owner = this
+        };
+        dialog.ShowDialog();
+    }
+
+    private void CleanupCardsMenu_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryGetCleanupWorkspace(out string workspaceDirectory))
+        {
+            return;
+        }
+
+        WorkspaceCardCleanupWindow dialog = new(
+            workspaceDirectory,
+            _catalog,
             _cardImageLoader)
         {
             Owner = this
