@@ -5,6 +5,8 @@ using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using DeckBuilder.GameData;
 using Microsoft.VisualBasic.FileIO;
 
@@ -14,16 +16,20 @@ public partial class WorkspaceDuplicateCleanupWindow : Window
 {
     private readonly string _workspaceDirectory;
     private readonly IReadOnlyList<InstalledDeckRecord> _decks;
+    private readonly GameCardImageLoader? _imageLoader;
     private readonly ObservableCollection<CleanupFileRow> _rows = new();
     private IReadOnlyList<CleanupFileRow> _allRows = Array.Empty<CleanupFileRow>();
+    private int _previewVersion;
 
     public WorkspaceDuplicateCleanupWindow(
         string workspaceDirectory,
-        IReadOnlyList<InstalledDeckRecord>? decks = null)
+        IReadOnlyList<InstalledDeckRecord>? decks = null,
+        GameCardImageLoader? imageLoader = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(workspaceDirectory);
         _workspaceDirectory = Path.GetFullPath(workspaceDirectory);
         _decks = decks ?? Array.Empty<InstalledDeckRecord>();
+        _imageLoader = imageLoader;
         InitializeComponent();
         DuplicateGrid.ItemsSource = _rows;
         Loaded += async (_, _) => await ScanAsync();
@@ -91,7 +97,8 @@ public partial class WorkspaceDuplicateCleanupWindow : Window
                 candidate.Length,
                 deck?.FriendlyName ?? string.Empty,
                 deck?.Uid,
-                deck?.CardCount));
+                deck?.CardCount,
+                deck?.Deck.DeckBoxImage));
         }
 
         foreach (FileCandidate candidate in artCandidates
@@ -107,6 +114,7 @@ public partial class WorkspaceDuplicateCleanupWindow : Window
                 Path.GetRelativePath(root, candidate.Path),
                 candidate.Length,
                 string.Empty,
+                null,
                 null,
                 null));
         }
@@ -205,7 +213,7 @@ public partial class WorkspaceDuplicateCleanupWindow : Window
             return;
         }
 
-        string mode = (CategoryBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "AllDecks";
+        string mode = CurrentMode();
         string query = SearchBox.Text.Trim();
         IEnumerable<CleanupFileRow> visible = mode switch
         {
@@ -223,10 +231,20 @@ public partial class WorkspaceDuplicateCleanupWindow : Window
                 || row.UidText.Contains(query, StringComparison.OrdinalIgnoreCase));
         }
 
+        CleanupFileRow? previous = DuplicateGrid.SelectedItem as CleanupFileRow;
         _rows.Clear();
         foreach (CleanupFileRow row in visible)
         {
             _rows.Add(row);
+        }
+
+        if (previous is not null && _rows.Contains(previous))
+        {
+            DuplicateGrid.SelectedItem = previous;
+        }
+        else if (_rows.Count > 0)
+        {
+            DuplicateGrid.SelectedIndex = 0;
         }
 
         int marked = _allRows.Count(row => row.Delete);
@@ -244,20 +262,42 @@ public partial class WorkspaceDuplicateCleanupWindow : Window
         SummaryText.Text = $"Visible: {_rows.Count:N0}  •  decks: {_allRows.Count(row => row.Category == "Deck"):N0}  •  duplicate deck groups: {duplicateDeckGroups:N0}  •  duplicate art groups: {duplicateArtGroups:N0}  •  marked: {marked:N0}";
     }
 
+    private string CurrentMode() =>
+        (CategoryBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "AllDecks";
+
     private void MarkDuplicates_Click(object sender, RoutedEventArgs e)
     {
-        foreach (IGrouping<string, CleanupFileRow> group in VisibleRows()
-                     .Where(row => row.IsDuplicate)
+        string mode = CurrentMode();
+        string category = mode == "DuplicateArt" ? "Art" : "Deck";
+
+        CleanupFileRow[] candidates = _allRows
+            .Where(row => row.Category == category && row.IsDuplicate)
+            .ToArray();
+
+        int marked = 0;
+        foreach (IGrouping<string, CleanupFileRow> group in candidates
                      .GroupBy(row => row.GroupKey!, StringComparer.OrdinalIgnoreCase))
         {
-            bool keep = true;
-            foreach (CleanupFileRow row in group.OrderBy(row => row.RelativePath, StringComparer.OrdinalIgnoreCase))
+            CleanupFileRow[] ordered = group
+                .OrderBy(row => row.RelativePath, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            for (int index = 0; index < ordered.Length; index++)
             {
-                row.Delete = !keep;
-                keep = false;
+                ordered[index].Delete = index > 0;
+                if (index > 0)
+                {
+                    marked++;
+                }
             }
         }
+
         ApplyFilter();
+        if (marked == 0)
+        {
+            MessageBox.Show(this,
+                category == "Art" ? "No duplicate TDX art groups were found." : "No duplicate deck XML groups were found.",
+                "No duplicates", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
     }
 
     private void ClearMarks_Click(object sender, RoutedEventArgs e)
@@ -269,7 +309,121 @@ public partial class WorkspaceDuplicateCleanupWindow : Window
         ApplyFilter();
     }
 
-    private IEnumerable<CleanupFileRow> VisibleRows() => _rows.ToArray();
+    private async void DuplicateGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        await UpdatePreviewAsync(DuplicateGrid.SelectedItem as CleanupFileRow);
+
+    private async Task UpdatePreviewAsync(CleanupFileRow? row)
+    {
+        int version = ++_previewVersion;
+        PreviewImage.Source = null;
+        PreviewPlaceholder.Visibility = Visibility.Visible;
+        PreviewPlaceholder.Text = "No preview";
+
+        if (row is null)
+        {
+            PreviewTitle.Text = "Select a deck or art file";
+            PreviewSubtitle.Text = string.Empty;
+            PreviewInfo.Text = string.Empty;
+            PreviewPath.Text = string.Empty;
+            return;
+        }
+
+        PreviewTitle.Text = row.Category == "Deck"
+            ? (string.IsNullOrWhiteSpace(row.FriendlyName) ? row.FileName : row.FriendlyName)
+            : row.FileName;
+        PreviewSubtitle.Text = row.Category == "Deck"
+            ? $"Deck XML{(row.IsDuplicate ? $"  •  duplicate group {row.GroupNumber}" : string.Empty)}"
+            : $"TDX art  •  duplicate group {row.GroupNumber}";
+        PreviewInfo.Text = row.Category == "Deck"
+            ? $"UID: {row.UidText}\nCards: {row.CardsText}\nDeck box: {(string.IsNullOrWhiteSpace(row.DeckBoxImage) ? "—" : row.DeckBoxImage)}"
+            : $"Size: {row.SizeText}";
+        PreviewPath.Text = row.RelativePath;
+
+        if (_imageLoader is null)
+        {
+            PreviewPlaceholder.Text = "Preview loader unavailable";
+            return;
+        }
+
+        string? imageId;
+        GameImageKind kind;
+        if (row.Category == "Deck")
+        {
+            imageId = row.DeckBoxImage;
+            kind = GameImageKind.Deck;
+            if (string.IsNullOrWhiteSpace(imageId))
+            {
+                PreviewPlaceholder.Text = "Deck has no cover";
+                return;
+            }
+        }
+        else
+        {
+            imageId = Path.GetFileNameWithoutExtension(row.FullPath);
+            kind = InferArtKind(row.RelativePath);
+        }
+
+        try
+        {
+            CardImageData? image = await _imageLoader.LoadAsync(imageId, kind);
+            if (version != _previewVersion || image is null)
+            {
+                if (version == _previewVersion)
+                {
+                    PreviewPlaceholder.Text = "Preview not available";
+                }
+                return;
+            }
+
+            BitmapSource bitmap = BitmapSource.Create(
+                image.Width,
+                image.Height,
+                96,
+                96,
+                PixelFormats.Bgra32,
+                null,
+                image.BgraPixels,
+                checked(image.Width * 4));
+            bitmap.Freeze();
+            PreviewImage.Source = bitmap;
+            PreviewPlaceholder.Visibility = Visibility.Collapsed;
+        }
+        catch
+        {
+            if (version == _previewVersion)
+            {
+                PreviewImage.Source = null;
+                PreviewPlaceholder.Visibility = Visibility.Visible;
+                PreviewPlaceholder.Text = "Preview not available";
+            }
+        }
+    }
+
+    private static GameImageKind InferArtKind(string relativePath)
+    {
+        string normalized = relativePath.Replace('/', '\\');
+        if (normalized.Contains("\\ILLUSTRATION\\", StringComparison.OrdinalIgnoreCase))
+        {
+            return GameImageKind.Illustration;
+        }
+        if (normalized.Contains("\\FRAME\\", StringComparison.OrdinalIgnoreCase))
+        {
+            return GameImageKind.Frame;
+        }
+        if (normalized.Contains("\\MANA\\", StringComparison.OrdinalIgnoreCase))
+        {
+            return GameImageKind.Mana;
+        }
+        if (normalized.Contains("\\DECKS\\", StringComparison.OrdinalIgnoreCase))
+        {
+            return GameImageKind.Deck;
+        }
+        if (normalized.Contains("\\PERSONALITY\\", StringComparison.OrdinalIgnoreCase))
+        {
+            return GameImageKind.Personality;
+        }
+        return GameImageKind.Texture;
+    }
 
     private async void Rescan_Click(object sender, RoutedEventArgs e) => await ScanAsync();
 
@@ -374,7 +528,8 @@ public partial class WorkspaceDuplicateCleanupWindow : Window
             long length,
             string friendlyName,
             int? uid,
-            int? cardCount)
+            int? cardCount,
+            string? deckBoxImage)
         {
             GroupKey = groupKey;
             GroupNumber = groupNumber;
@@ -385,6 +540,7 @@ public partial class WorkspaceDuplicateCleanupWindow : Window
             FriendlyName = friendlyName;
             Uid = uid;
             CardCount = cardCount;
+            DeckBoxImage = deckBoxImage;
         }
 
         public string? GroupKey { get; }
@@ -398,6 +554,7 @@ public partial class WorkspaceDuplicateCleanupWindow : Window
         public string FriendlyName { get; }
         public int? Uid { get; }
         public int? CardCount { get; }
+        public string? DeckBoxImage { get; }
         public string UidText => Uid?.ToString() ?? string.Empty;
         public string CardsText => CardCount?.ToString() ?? string.Empty;
         public string FileName => Path.GetFileName(FullPath);
