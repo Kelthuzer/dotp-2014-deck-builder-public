@@ -41,6 +41,20 @@ public partial class MainWindow
             grid.PreviewMouseMove -= Grid_PreviewMouseMove;
             grid.PreviewMouseMove += SafeGrid_PreviewMouseMove;
         }
+
+        foreach (DataGrid grid in new[]
+                 {
+                     MainDeckGrid,
+                     RegularUnlocksGrid,
+                     PromoUnlocksGrid
+                 })
+        {
+            // Catalog cards start a COPY operation, while cards already in a deck start a MOVE.
+            // The old DragOver handler always advertised MOVE, which has no overlap with a
+            // catalog drag whose allowed effect is COPY. WPF therefore rejected the drop.
+            grid.DragOver -= SectionGrid_DragOver;
+            grid.DragOver += SafeSectionGrid_DragOver;
+        }
     }
 
     private void SafeGrid_PreviewMouseMove(object sender, MouseEventArgs e)
@@ -77,6 +91,23 @@ public partial class MainWindow
         }
 
         DragDrop.DoDragDrop(grid, payload, payload.Source is null ? DragDropEffects.Copy : DragDropEffects.Move);
+    }
+
+    private void SafeSectionGrid_DragOver(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetData(typeof(DragPayload)) is not DragPayload payload)
+        {
+            e.Effects = DragDropEffects.None;
+            e.Handled = true;
+            return;
+        }
+
+        e.Effects = payload.Cards is not null
+            ? DragDropEffects.Copy
+            : payload.Entries is not null
+                ? DragDropEffects.Move
+                : DragDropEffects.None;
+        e.Handled = true;
     }
 
     private static T? FindVisualAncestor<T>(DependencyObject? value) where T : DependencyObject
