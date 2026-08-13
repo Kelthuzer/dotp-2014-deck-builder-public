@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using DeckBuilder.Core.Models;
 using DeckBuilder.GameData;
 using Microsoft.VisualBasic.FileIO;
 
@@ -32,7 +33,11 @@ public partial class WorkspaceDuplicateCleanupWindow : Window
         _imageLoader = imageLoader;
         InitializeComponent();
         DuplicateGrid.ItemsSource = _rows;
-        Loaded += async (_, _) => await ScanAsync();
+        Loaded += async (_, _) =>
+        {
+            UpdateFilterControls();
+            await ScanAsync();
+        };
     }
 
     private async Task ScanAsync()
@@ -95,10 +100,7 @@ public partial class WorkspaceDuplicateCleanupWindow : Window
                 candidate.Path,
                 Path.GetRelativePath(root, candidate.Path),
                 candidate.Length,
-                deck?.FriendlyName ?? string.Empty,
-                deck?.Uid,
-                deck?.CardCount,
-                deck?.Deck.DeckBoxImage));
+                deck));
         }
 
         foreach (FileCandidate candidate in artCandidates
@@ -113,9 +115,6 @@ public partial class WorkspaceDuplicateCleanupWindow : Window
                 candidate.Path,
                 Path.GetRelativePath(root, candidate.Path),
                 candidate.Length,
-                string.Empty,
-                null,
-                null,
                 null));
         }
 
@@ -204,7 +203,25 @@ public partial class WorkspaceDuplicateCleanupWindow : Window
         return Convert.ToHexString(SHA256.HashData(input));
     }
 
-    private void Filter_Changed(object sender, EventArgs e) => ApplyFilter();
+    private void Filter_Changed(object sender, EventArgs e)
+    {
+        UpdateFilterControls();
+        ApplyFilter();
+    }
+
+    private void UpdateFilterControls()
+    {
+        if (!IsLoaded)
+        {
+            return;
+        }
+
+        bool deckMode = CurrentMode() != "DuplicateArt";
+        DeckSearchBox.IsEnabled = deckMode;
+        CardSearchBox.IsEnabled = deckMode;
+        SortBox.IsEnabled = deckMode;
+        PromoOnlyCheck.IsEnabled = deckMode;
+    }
 
     private void ApplyFilter()
     {
@@ -214,7 +231,9 @@ public partial class WorkspaceDuplicateCleanupWindow : Window
         }
 
         string mode = CurrentMode();
-        string query = SearchBox.Text.Trim();
+        string deckQuery = DeckSearchBox.Text.Trim();
+        string cardQuery = CardSearchBox.Text.Trim();
+
         IEnumerable<CleanupFileRow> visible = mode switch
         {
             "DuplicateDecks" => _allRows.Where(row => row.Category == "Deck" && row.IsDuplicate),
@@ -222,18 +241,31 @@ public partial class WorkspaceDuplicateCleanupWindow : Window
             _ => _allRows.Where(row => row.Category == "Deck")
         };
 
-        if (query.Length > 0)
+        if (mode != "DuplicateArt")
         {
-            visible = visible.Where(row =>
-                row.FriendlyName.Contains(query, StringComparison.CurrentCultureIgnoreCase)
-                || row.FileName.Contains(query, StringComparison.CurrentCultureIgnoreCase)
-                || row.RelativePath.Contains(query, StringComparison.CurrentCultureIgnoreCase)
-                || row.UidText.Contains(query, StringComparison.OrdinalIgnoreCase));
+            if (deckQuery.Length > 0)
+            {
+                visible = visible.Where(row => row.MatchesDeckSearch(deckQuery));
+            }
+
+            if (cardQuery.Length > 0)
+            {
+                visible = visible.Where(row => row.MatchesCardSearch(cardQuery));
+            }
+
+            if (PromoOnlyCheck.IsChecked == true)
+            {
+                visible = visible.Where(row => row.PromoUnlockCount > 0);
+            }
+
+            visible = SortDeckRows(visible, CurrentSort());
         }
 
         CleanupFileRow? previous = DuplicateGrid.SelectedItem as CleanupFileRow;
+        CleanupFileRow[] visibleArray = visible.ToArray();
+
         _rows.Clear();
-        foreach (CleanupFileRow row in visible)
+        foreach (CleanupFileRow row in visibleArray)
         {
             _rows.Add(row);
         }
@@ -245,6 +277,10 @@ public partial class WorkspaceDuplicateCleanupWindow : Window
         else if (_rows.Count > 0)
         {
             DuplicateGrid.SelectedIndex = 0;
+        }
+        else
+        {
+            _ = UpdatePreviewAsync(null);
         }
 
         int marked = _allRows.Count(row => row.Delete);
@@ -259,11 +295,54 @@ public partial class WorkspaceDuplicateCleanupWindow : Window
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Count();
 
-        SummaryText.Text = $"Visible: {_rows.Count:N0}  •  decks: {_allRows.Count(row => row.Category == "Deck"):N0}  •  duplicate deck groups: {duplicateDeckGroups:N0}  •  duplicate art groups: {duplicateArtGroups:N0}  •  marked: {marked:N0}";
+        SummaryText.Text =
+            $"Visible: {_rows.Count:N0}  •  decks: {_allRows.Count(row => row.Category == "Deck"):N0}" +
+            $"  •  promo decks: {_allRows.Count(row => row.Category == "Deck" && row.PromoUnlockCount > 0):N0}" +
+            $"  •  duplicate deck groups: {duplicateDeckGroups:N0}" +
+            $"  •  duplicate art groups: {duplicateArtGroups:N0}  •  marked: {marked:N0}";
+    }
+
+    private static IEnumerable<CleanupFileRow> SortDeckRows(IEnumerable<CleanupFileRow> rows, string sort)
+    {
+        return sort switch
+        {
+            "Uid" => rows
+                .OrderBy(row => row.Uid ?? int.MaxValue)
+                .ThenBy(row => row.NameSortBucket)
+                .ThenBy(row => row.FriendlyName, StringComparer.CurrentCultureIgnoreCase)
+                .ThenBy(row => row.FileName, StringComparer.OrdinalIgnoreCase),
+
+            "Cards" => rows
+                .OrderBy(row => row.CardCount ?? int.MaxValue)
+                .ThenBy(row => row.NameSortBucket)
+                .ThenBy(row => row.FriendlyName, StringComparer.CurrentCultureIgnoreCase)
+                .ThenBy(row => row.Uid ?? int.MaxValue)
+                .ThenBy(row => row.FileName, StringComparer.OrdinalIgnoreCase),
+
+            "Promo" => rows
+                .OrderByDescending(row => row.PromoUnlockCount)
+                .ThenBy(row => row.NameSortBucket)
+                .ThenBy(row => row.FriendlyName, StringComparer.CurrentCultureIgnoreCase)
+                .ThenBy(row => row.Uid ?? int.MaxValue)
+                .ThenBy(row => row.FileName, StringComparer.OrdinalIgnoreCase),
+
+            "File" => rows
+                .OrderBy(row => row.FileName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(row => row.RelativePath, StringComparer.OrdinalIgnoreCase),
+
+            _ => rows
+                .OrderBy(row => row.NameSortBucket)
+                .ThenBy(row => row.FriendlyName, StringComparer.CurrentCultureIgnoreCase)
+                .ThenBy(row => row.Uid ?? int.MaxValue)
+                .ThenBy(row => row.FileName, StringComparer.OrdinalIgnoreCase)
+        };
     }
 
     private string CurrentMode() =>
         (CategoryBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "AllDecks";
+
+    private string CurrentSort() =>
+        (SortBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "GameName";
 
     private void MarkDuplicates_Click(object sender, RoutedEventArgs e)
     {
@@ -318,6 +397,10 @@ public partial class WorkspaceDuplicateCleanupWindow : Window
         PreviewImage.Source = null;
         PreviewPlaceholder.Visibility = Visibility.Visible;
         PreviewPlaceholder.Text = "No preview";
+        MainDeckList.ItemsSource = null;
+        UnlockList.ItemsSource = null;
+        PromoList.ItemsSource = null;
+        DeckSections.Visibility = Visibility.Collapsed;
 
         if (row is null)
         {
@@ -329,15 +412,41 @@ public partial class WorkspaceDuplicateCleanupWindow : Window
         }
 
         PreviewTitle.Text = row.Category == "Deck"
-            ? (string.IsNullOrWhiteSpace(row.FriendlyName) ? row.FileName : row.FriendlyName)
+            ? row.DisplayGameName
             : row.FileName;
         PreviewSubtitle.Text = row.Category == "Deck"
             ? $"Deck XML{(row.IsDuplicate ? $"  •  duplicate group {row.GroupNumber}" : string.Empty)}"
             : $"TDX art  •  duplicate group {row.GroupNumber}";
-        PreviewInfo.Text = row.Category == "Deck"
-            ? $"UID: {row.UidText}\nCards: {row.CardsText}\nDeck box: {(string.IsNullOrWhiteSpace(row.DeckBoxImage) ? "—" : row.DeckBoxImage)}"
-            : $"Size: {row.SizeText}";
         PreviewPath.Text = row.RelativePath;
+
+        if (row.Category == "Deck")
+        {
+            PreviewInfo.Text =
+                $"Technical: {row.FileName}\n" +
+                $"UID: {row.UidText}  •  Main: {row.CardsText}  •  Unlocks: {row.UnlocksText}  •  Promo: {row.PromoText}\n" +
+                $"Missing definitions: {row.MissingText}  •  Availability: {row.AvailabilityText}  •  Content pack: {row.ContentPackText}\n" +
+                $"Deck box: {(string.IsNullOrWhiteSpace(row.DeckBoxImage) ? "—" : row.DeckBoxImage)}";
+
+            if (row.DeckRecord is not null)
+            {
+                DeckSections.Visibility = Visibility.Visible;
+                MainTab.Header = $"Main ({row.CardCount ?? 0})";
+                UnlockTab.Header = $"Unlocks ({row.RegularUnlockCount})";
+                PromoTab.Header = $"Promo ({row.PromoUnlockCount})";
+                MainDeckList.ItemsSource = FormatEntries(row.DeckRecord.Deck.MainDeck);
+                UnlockList.ItemsSource = FormatEntries(row.DeckRecord.Deck.RegularUnlocks);
+                PromoList.ItemsSource = FormatEntries(row.DeckRecord.Deck.PromoUnlocks);
+
+                if (row.PromoUnlockCount > 0)
+                {
+                    PromoTab.IsSelected = true;
+                }
+            }
+        }
+        else
+        {
+            PreviewInfo.Text = $"Size: {row.SizeText}";
+        }
 
         if (_imageLoader is null)
         {
@@ -399,6 +508,21 @@ public partial class WorkspaceDuplicateCleanupWindow : Window
         }
     }
 
+    private static string[] FormatEntries(IEnumerable<DeckEntry> entries)
+    {
+        return entries
+            .Select(entry =>
+            {
+                string name = !string.IsNullOrWhiteSpace(entry.Card.LocalizedName)
+                    ? entry.Card.LocalizedName
+                    : !string.IsNullOrWhiteSpace(entry.Card.EnglishName)
+                        ? entry.Card.EnglishName
+                        : entry.Card.FileName;
+                return entry.Quantity > 1 ? $"{entry.Quantity}× {name}" : name;
+            })
+            .ToArray();
+    }
+
     private static GameImageKind InferArtKind(string relativePath)
     {
         string normalized = relativePath.Replace('/', '\\');
@@ -452,10 +576,11 @@ public partial class WorkspaceDuplicateCleanupWindow : Window
 
         int deckCount = selected.Count(row => row.Category == "Deck");
         int artCount = selected.Count(row => row.Category == "Art");
+        int promoDeckCount = selected.Count(row => row.Category == "Deck" && row.PromoUnlockCount > 0);
         long bytes = selected.Sum(row => row.Length);
         MessageBoxResult confirmation = MessageBox.Show(this,
             $"Delete {selected.Length:N0} marked file(s) ({FormatBytes(bytes)})?\n\n" +
-            $"Deck XML: {deckCount:N0}\nTDX art: {artCount:N0}\n\n" +
+            $"Deck XML: {deckCount:N0}\nTDX art: {artCount:N0}\nDecks with promo unlocks: {promoDeckCount:N0}\n\n" +
             "Any marked deck may be removed, even if it is unique or contains only a few cards.\n" +
             "Related scripts and other resources are not removed automatically.\n" +
             "Files are sent to the Windows Recycle Bin.",
@@ -526,10 +651,7 @@ public partial class WorkspaceDuplicateCleanupWindow : Window
             string fullPath,
             string relativePath,
             long length,
-            string friendlyName,
-            int? uid,
-            int? cardCount,
-            string? deckBoxImage)
+            InstalledDeckRecord? deckRecord)
         {
             GroupKey = groupKey;
             GroupNumber = groupNumber;
@@ -537,10 +659,7 @@ public partial class WorkspaceDuplicateCleanupWindow : Window
             FullPath = fullPath;
             RelativePath = relativePath;
             Length = length;
-            FriendlyName = friendlyName;
-            Uid = uid;
-            CardCount = cardCount;
-            DeckBoxImage = deckBoxImage;
+            DeckRecord = deckRecord;
         }
 
         public string? GroupKey { get; }
@@ -551,14 +670,51 @@ public partial class WorkspaceDuplicateCleanupWindow : Window
         public string FullPath { get; }
         public string RelativePath { get; }
         public long Length { get; }
-        public string FriendlyName { get; }
-        public int? Uid { get; }
-        public int? CardCount { get; }
-        public string? DeckBoxImage { get; }
+        public InstalledDeckRecord? DeckRecord { get; }
+
+        public string FriendlyName => DeckRecord?.FriendlyName ?? string.Empty;
+        public string DisplayGameName => string.IsNullOrWhiteSpace(FriendlyName) ? "(unresolved)" : FriendlyName;
+        public int NameSortBucket => string.IsNullOrWhiteSpace(FriendlyName) ? 1 : 0;
+        public int? Uid => DeckRecord?.Uid;
+        public int? CardCount => DeckRecord?.CardCount;
+        public int RegularUnlockCount => DeckRecord?.RegularUnlockCount ?? 0;
+        public int PromoUnlockCount => DeckRecord?.PromoUnlockCount ?? 0;
+        public int MissingCardCount => DeckRecord?.MissingCardCount ?? 0;
+        public string? DeckBoxImage => DeckRecord?.Deck.DeckBoxImage;
+        public string AvailabilityText => DeckRecord?.Deck.Availability.ToString() ?? "—";
+        public string ContentPackText => DeckRecord is null ? "—" : DeckRecord.Deck.ContentPack.ToString();
+
         public string UidText => Uid?.ToString() ?? string.Empty;
         public string CardsText => CardCount?.ToString() ?? string.Empty;
+        public string UnlocksText => DeckRecord is null ? string.Empty : RegularUnlockCount.ToString();
+        public string PromoText => DeckRecord is null ? string.Empty : PromoUnlockCount.ToString();
+        public string MissingText => DeckRecord is null ? string.Empty : MissingCardCount.ToString();
         public string FileName => Path.GetFileName(FullPath);
         public string SizeText => FormatBytes(Length);
+
+        public bool MatchesDeckSearch(string query)
+        {
+            return DisplayGameName.Contains(query, StringComparison.CurrentCultureIgnoreCase)
+                || FileName.Contains(query, StringComparison.CurrentCultureIgnoreCase)
+                || RelativePath.Contains(query, StringComparison.CurrentCultureIgnoreCase)
+                || UidText.Contains(query, StringComparison.OrdinalIgnoreCase);
+        }
+
+        public bool MatchesCardSearch(string query)
+        {
+            if (DeckRecord is null)
+            {
+                return false;
+            }
+
+            return DeckRecord.Deck.MainDeck
+                .Concat(DeckRecord.Deck.RegularUnlocks)
+                .Concat(DeckRecord.Deck.PromoUnlocks)
+                .Any(entry =>
+                    entry.Card.LocalizedName.Contains(query, StringComparison.CurrentCultureIgnoreCase)
+                    || entry.Card.EnglishName.Contains(query, StringComparison.CurrentCultureIgnoreCase)
+                    || entry.Card.FileName.Contains(query, StringComparison.OrdinalIgnoreCase));
+        }
 
         public bool Delete
         {
