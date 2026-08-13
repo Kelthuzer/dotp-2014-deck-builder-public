@@ -88,6 +88,7 @@ public partial class MainWindow
         WorkspaceCardCleanupWindow dialog = new(
             workspaceDirectory,
             _catalog,
+            _installedDecks,
             _cardImageLoader)
         {
             Owner = this
