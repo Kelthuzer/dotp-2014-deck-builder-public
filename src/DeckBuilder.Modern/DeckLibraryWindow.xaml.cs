@@ -5,7 +5,6 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using DeckBuilder.GameData;
-using Microsoft.VisualBasic.FileIO;
 
 namespace DeckBuilder.Modern;
 
@@ -31,9 +30,7 @@ public partial class DeckLibraryWindow : Window
         _allDecks = decks?.ToList() ?? new List<InstalledDeckRecord>();
         _imageLoader = imageLoader;
         _workspaceDirectory = string.IsNullOrWhiteSpace(workspaceDirectory) ? null : Path.GetFullPath(workspaceDirectory);
-        bool workspaceAvailable = _workspaceDirectory is not null && Directory.Exists(_workspaceDirectory);
-        CleanupButton.IsEnabled = workspaceAvailable;
-        DeleteButton.IsEnabled = false;
+        CleanupButton.IsEnabled = _workspaceDirectory is not null && Directory.Exists(_workspaceDirectory);
         RefreshResults();
     }
 
@@ -67,24 +64,14 @@ public partial class DeckLibraryWindow : Window
         {
             DeckGrid.SelectedIndex = 0;
         }
-        UpdateActionButtons();
+        SetActionButtonsEnabled(DeckGrid.SelectedItem is InstalledDeckRecord);
     }
 
     private async void DeckGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         InstalledDeckRecord? selected = DeckGrid.SelectedItem as InstalledDeckRecord;
-        UpdateActionButtons();
+        SetActionButtonsEnabled(selected is not null);
         await UpdatePreviewAsync(selected);
-    }
-
-    private void UpdateActionButtons()
-    {
-        bool hasSingle = DeckGrid.SelectedItems.Count == 1 && DeckGrid.SelectedItem is InstalledDeckRecord;
-        OpenButton.IsEnabled = hasSingle;
-        CopyButton.IsEnabled = hasSingle;
-        DeleteButton.IsEnabled = DeckGrid.SelectedItems.Count > 0
-            && _workspaceDirectory is not null
-            && Directory.Exists(_workspaceDirectory);
     }
 
     private async Task UpdatePreviewAsync(InstalledDeckRecord? deck)
@@ -147,157 +134,30 @@ public partial class DeckLibraryWindow : Window
         }
     }
 
-    private void CleanupDuplicates_Click(object sender, RoutedEventArgs e)
+    private void CleanupDecks_Click(object sender, RoutedEventArgs e)
     {
         string? workspaceDirectory = _workspaceDirectory;
         if (string.IsNullOrWhiteSpace(workspaceDirectory) || !Directory.Exists(workspaceDirectory))
         {
             MessageBox.Show(this,
-                "Load an unpacked workspace first. Duplicate cleanup edits loose workspace files, never packed game WADs.",
+                "Load an unpacked workspace first. Deck Cleanup edits loose workspace files, never packed game WADs.",
                 "Workspace required", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
-        WorkspaceDuplicateCleanupWindow dialog = new(workspaceDirectory) { Owner = this };
+        WorkspaceDuplicateCleanupWindow dialog = new(workspaceDirectory, _allDecks) { Owner = this };
         dialog.ShowDialog();
     }
 
-    private void DeleteSelected_Click(object sender, RoutedEventArgs e)
+    private void SetActionButtonsEnabled(bool enabled)
     {
-        string? workspaceDirectory = _workspaceDirectory;
-        if (string.IsNullOrWhiteSpace(workspaceDirectory) || !Directory.Exists(workspaceDirectory))
-        {
-            MessageBox.Show(this,
-                "Load an unpacked workspace first. Deck deletion only removes loose workspace deck XML files; packed game WADs are never modified.",
-                "Workspace required", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
-        InstalledDeckRecord[] selected = DeckGrid.SelectedItems
-            .OfType<InstalledDeckRecord>()
-            .ToArray();
-        if (selected.Length == 0)
-        {
-            return;
-        }
-
-        List<(InstalledDeckRecord Deck, string Path)> resolved = new();
-        List<string> unresolved = new();
-        foreach (InstalledDeckRecord deck in selected)
-        {
-            string? path = ResolveLooseDeckPath(workspaceDirectory, deck);
-            if (path is null)
-            {
-                unresolved.Add($"{deck.FriendlyName} [{deck.TechnicalName}] from {deck.Source}");
-            }
-            else
-            {
-                resolved.Add((deck, path));
-            }
-        }
-
-        if (unresolved.Count > 0)
-        {
-            MessageBox.Show(this,
-                "These selected decks could not be mapped to one unique loose XML file and were not touched:\n\n" +
-                string.Join("\n", unresolved.Take(12)) +
-                (unresolved.Count > 12 ? $"\n… and {unresolved.Count - 12} more" : string.Empty),
-                "Some decks cannot be deleted safely", MessageBoxButton.OK, MessageBoxImage.Warning);
-        }
-
-        if (resolved.Count == 0)
-        {
-            return;
-        }
-
-        string sample = string.Join("\n", resolved.Take(8).Select(item =>
-            $"• {item.Deck.FriendlyName} ({item.Deck.CardCount} cards) — {Path.GetRelativePath(workspaceDirectory, item.Path)}"));
-        if (resolved.Count > 8)
-        {
-            sample += $"\n… and {resolved.Count - 8} more";
-        }
-
-        MessageBoxResult confirmation = MessageBox.Show(this,
-            $"Delete {resolved.Count} selected deck(s) from the unpacked workspace?\n\n{sample}\n\n" +
-            "Only the selected deck XML files are removed. Related card art, scripts and other shared resources are left untouched.\n" +
-            "Files are sent to the Windows Recycle Bin.",
-            "Confirm deck deletion", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        if (confirmation != MessageBoxResult.Yes)
-        {
-            return;
-        }
-
-        List<string> failures = new();
-        List<InstalledDeckRecord> deleted = new();
-        foreach ((InstalledDeckRecord deck, string path) in resolved)
-        {
-            try
-            {
-                FileSystem.DeleteFile(path, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin);
-                deleted.Add(deck);
-            }
-            catch (Exception exception)
-            {
-                failures.Add($"{Path.GetRelativePath(workspaceDirectory, path)}: {exception.Message}");
-            }
-        }
-
-        foreach (InstalledDeckRecord deck in deleted)
-        {
-            _allDecks.Remove(deck);
-        }
-        RefreshResults();
-
-        if (failures.Count > 0)
-        {
-            MessageBox.Show(this,
-                "Some deck files could not be deleted:\n\n" + string.Join("\n", failures.Take(12)),
-                "Deck deletion completed with errors", MessageBoxButton.OK, MessageBoxImage.Warning);
-        }
-    }
-
-    private static string? ResolveLooseDeckPath(string workspaceDirectory, InstalledDeckRecord deck)
-    {
-        string expectedFile = deck.TechnicalName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)
-            ? deck.TechnicalName
-            : deck.TechnicalName + ".xml";
-
-        string[] candidates = Directory.EnumerateFiles(workspaceDirectory, expectedFile, System.IO.SearchOption.AllDirectories)
-            .Where(path => path.Replace('/', '\\').Contains("\\DATA_ALL_PLATFORMS\\DECKS\\", StringComparison.OrdinalIgnoreCase))
-            .ToArray();
-
-        if (candidates.Length == 1)
-        {
-            return candidates[0];
-        }
-
-        if (candidates.Length == 0)
-        {
-            return null;
-        }
-
-        string[] sourceMatches = candidates
-            .Where(path => PathMatchesSource(workspaceDirectory, path, deck.Source))
-            .ToArray();
-        return sourceMatches.Length == 1 ? sourceMatches[0] : null;
-    }
-
-    private static bool PathMatchesSource(string workspaceDirectory, string path, string source)
-    {
-        if (string.IsNullOrWhiteSpace(source))
-        {
-            return false;
-        }
-
-        string relative = Path.GetRelativePath(workspaceDirectory, path).Replace('/', '\\');
-        string normalizedSource = Path.GetFileNameWithoutExtension(source)?.Trim() ?? source.Trim();
-        return relative.StartsWith(normalizedSource + "\\", StringComparison.OrdinalIgnoreCase)
-            || relative.Contains("\\" + normalizedSource + "\\", StringComparison.OrdinalIgnoreCase);
+        OpenButton.IsEnabled = enabled;
+        CopyButton.IsEnabled = enabled;
     }
 
     private void DeckGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (DeckGrid.SelectedItems.Count == 1 && DeckGrid.SelectedItem is InstalledDeckRecord)
+        if (DeckGrid.SelectedItem is InstalledDeckRecord)
         {
             AcceptSelection(DeckLibraryAction.Open);
         }
@@ -309,7 +169,7 @@ public partial class DeckLibraryWindow : Window
 
     private void AcceptSelection(DeckLibraryAction action)
     {
-        if (DeckGrid.SelectedItems.Count != 1 || DeckGrid.SelectedItem is not InstalledDeckRecord selected)
+        if (DeckGrid.SelectedItem is not InstalledDeckRecord selected)
         {
             return;
         }
