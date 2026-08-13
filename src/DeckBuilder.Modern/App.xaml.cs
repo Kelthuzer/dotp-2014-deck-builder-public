@@ -27,6 +27,7 @@ public partial class App : Application
             mainWindow.InstallDeckAssistantDashboard();
             mainWindow.InstallCatalogTokenFilter();
             mainWindow.InstallCatalogSearchAndSort();
+            mainWindow.InstallCatalogCostSortFix();
             mainWindow.InstallSettingsMenu();
             mainWindow.InstallCleanupToolsMenu();
             mainWindow.InstallMultiCardPreview();
