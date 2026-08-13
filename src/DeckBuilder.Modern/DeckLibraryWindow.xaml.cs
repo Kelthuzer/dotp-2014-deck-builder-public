@@ -145,7 +145,7 @@ public partial class DeckLibraryWindow : Window
             return;
         }
 
-        WorkspaceDuplicateCleanupWindow dialog = new(workspaceDirectory, _allDecks) { Owner = this };
+        WorkspaceDuplicateCleanupWindow dialog = new(workspaceDirectory, _allDecks, _imageLoader) { Owner = this };
         dialog.ShowDialog();
     }
 
