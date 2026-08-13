@@ -14,7 +14,7 @@
 
     <StackPanel>
       <TextBlock Text="Deck library" FontSize="20" FontWeight="SemiBold" />
-      <TextBlock Text="Open any deck found in the loaded game/workspace for editing, create an independent copy, or manually remove unwanted loose-workspace decks. Duplicate cleanup remains available as a separate helper."
+      <TextBlock Text="Open any deck found in the loaded game/workspace for editing, create an independent copy, or open Deck Cleanup to remove unwanted loose-workspace decks and exact duplicate art."
                  Margin="0,4,0,10" TextWrapping="Wrap" Foreground="#FF475569" />
     </StackPanel>
 
@@ -30,7 +30,7 @@
       </Grid.ColumnDefinitions>
 
       <DataGrid x:Name="DeckGrid" Grid.Column="0" IsReadOnly="True"
-                AutoGenerateColumns="False" SelectionMode="Extended" SelectionUnit="FullRow"
+                AutoGenerateColumns="False" SelectionMode="Single" SelectionUnit="FullRow"
                 SelectionChanged="DeckGrid_SelectionChanged" MouseDoubleClick="DeckGrid_MouseDoubleClick">
         <DataGrid.RowStyle>
           <Style TargetType="DataGridRow">
@@ -89,10 +89,8 @@
               IsDefault="True" IsEnabled="False" Click="Open_Click" />
       <Button x:Name="CopyButton" DockPanel.Dock="Right" Content="Create copy"
               IsEnabled="False" Click="Copy_Click" Margin="0,0,8,0" />
-      <Button x:Name="DeleteButton" DockPanel.Dock="Right" Content="Delete selected…"
-              IsEnabled="False" Click="DeleteSelected_Click" Margin="0,0,8,0" />
-      <Button x:Name="CleanupButton" DockPanel.Dock="Right" Content="Cleanup duplicates…"
-              Click="CleanupDuplicates_Click" Margin="0,0,8,0" />
+      <Button x:Name="CleanupButton" DockPanel.Dock="Right" Content="Cleanup Decks…"
+              Click="CleanupDecks_Click" Margin="0,0,8,0" />
       <Button DockPanel.Dock="Right" Content="Cancel" IsCancel="True" Margin="0,0,8,0" />
     </DockPanel>
   </Grid>
