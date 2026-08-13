@@ -28,8 +28,10 @@ public partial class WorkspaceArtCleanupWindow
             try
             {
                 XDocument document = XDocument.Load(path, LoadOptions.None);
-                XElement? card = document.DescendantsAndSelf()
-                    .FirstOrDefault(element => element.Name.LocalName.Equals("CARD_V2", StringComparison.OrdinalIgnoreCase));
+                XElement? card = document.Root?.Name.LocalName.Equals("CARD_V2", StringComparison.OrdinalIgnoreCase) == true
+                    ? document.Root
+                    : document.Descendants().FirstOrDefault(element =>
+                        element.Name.LocalName.Equals("CARD_V2", StringComparison.OrdinalIgnoreCase));
                 if (card is null)
                     continue;
 
@@ -59,7 +61,7 @@ public partial class WorkspaceArtCleanupWindow
             }
             catch
             {
-                // Cleanup usage analysis is best-effort. A malformed unrelated XML must not block the window.
+                // Usage analysis is best-effort; one malformed XML must not block the cleanup window.
             }
         }
 
