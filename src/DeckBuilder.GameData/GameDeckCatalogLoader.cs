@@ -14,6 +14,7 @@ public sealed class GameDeckCatalogLoader
 {
     private const string DeckDirectory = "DATA_ALL_PLATFORMS\\DECKS";
     private const string UnlockDirectory = "DATA_ALL_PLATFORMS\\UNLOCKS";
+    private const string TextPermanentDirectory = "DATA_ALL_PLATFORMS\\TEXT_PERMANENT";
 
     public async Task<GameDeckCatalogLoadResult> LoadAsync(
         string gameDirectory,
@@ -37,6 +38,7 @@ public sealed class GameDeckCatalogLoader
     {
         List<InstalledDeckRecord> decks = new();
         List<PendingUnlock> unlocks = new();
+        Dictionary<string, string> localizedText = new(StringComparer.OrdinalIgnoreCase);
         ConcurrentBag<string> warnings = new();
 
         foreach (string wadPath in Directory.EnumerateFiles(gameDirectory, "*.wad", SearchOption.TopDirectoryOnly)
@@ -46,7 +48,7 @@ public sealed class GameDeckCatalogLoader
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                ReadWad(wadPath, catalog, decks, unlocks, cancellationToken, warnings);
+                ReadWad(wadPath, catalog, decks, unlocks, localizedText, cancellationToken, warnings);
             }
             catch (Exception exception)
             {
@@ -59,7 +61,7 @@ public sealed class GameDeckCatalogLoader
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                ReadDirectory(directory, catalog, decks, unlocks, cancellationToken, warnings);
+                ReadDirectory(directory, catalog, decks, unlocks, localizedText, cancellationToken, warnings);
             }
             catch (Exception exception)
             {
@@ -68,6 +70,8 @@ public sealed class GameDeckCatalogLoader
         }
 
         AttachUnlocks(decks, unlocks);
+        ResolveDeckNames(decks, localizedText);
+
         InstalledDeckRecord[] result = decks
             .Where(deck => !deck.FileName.Contains("_LAND_POOL", StringComparison.OrdinalIgnoreCase))
             .OrderBy(deck => deck.DisplayName, StringComparer.CurrentCultureIgnoreCase)
@@ -84,6 +88,7 @@ public sealed class GameDeckCatalogLoader
         IReadOnlyList<CardRecord> catalog,
         ICollection<InstalledDeckRecord> decks,
         ICollection<PendingUnlock> unlocks,
+        IDictionary<string, string> localizedText,
         CancellationToken cancellationToken,
         ConcurrentBag<string> warnings)
     {
@@ -98,6 +103,26 @@ public sealed class GameDeckCatalogLoader
         archive.Deserialize(input);
         bool compressed = (archive.Flags & Wad.ArchiveFlags.HasCompressedFiles) == Wad.ArchiveFlags.HasCompressedFiles;
         string source = Path.GetFileNameWithoutExtension(wadPath) ?? wadPath;
+
+        Wad.DirectoryEntry? textDirectory = FindDirectory(archive.Directories, TextPermanentDirectory);
+        if (textDirectory is not null)
+        {
+            foreach (Wad.FileEntry file in textDirectory.Files.Where(IsXml))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    MergeLocalizedText(
+                        localizedText,
+                        TextPermanentTableParser.ParsePreferred(
+                            DecodeText(ReadFile(input, archive, file, compressed))));
+                }
+                catch (Exception exception)
+                {
+                    warnings.Add($"{source}\\{file.Name} text: {exception.Message}");
+                }
+            }
+        }
 
         Wad.DirectoryEntry? deckDirectory = FindDirectory(archive.Directories, DeckDirectory);
         if (deckDirectory is not null)
@@ -150,10 +175,29 @@ public sealed class GameDeckCatalogLoader
         IReadOnlyList<CardRecord> catalog,
         ICollection<InstalledDeckRecord> decks,
         ICollection<PendingUnlock> unlocks,
+        IDictionary<string, string> localizedText,
         CancellationToken cancellationToken,
         ConcurrentBag<string> warnings)
     {
         string source = FileName(directory);
+
+        string textDirectory = Path.Combine(directory, "DATA_ALL_PLATFORMS", "TEXT_PERMANENT");
+        if (Directory.Exists(textDirectory))
+        {
+            foreach (string path in Directory.EnumerateFiles(textDirectory, "*.xml", SearchOption.TopDirectoryOnly))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    MergeLocalizedText(localizedText, TextPermanentTableParser.ParsePreferred(File.ReadAllText(path)));
+                }
+                catch (Exception exception)
+                {
+                    warnings.Add($"{path} text: {exception.Message}");
+                }
+            }
+        }
+
         string deckDirectory = Path.Combine(directory, "DATA_ALL_PLATFORMS", "DECKS");
         if (Directory.Exists(deckDirectory))
         {
@@ -193,6 +237,42 @@ public sealed class GameDeckCatalogLoader
                 {
                     warnings.Add($"{path}: {exception.Message}");
                 }
+            }
+        }
+    }
+
+    private static void MergeLocalizedText(
+        IDictionary<string, string> target,
+        IReadOnlyDictionary<string, string> source)
+    {
+        foreach ((string id, string value) in source)
+        {
+            target[id] = value;
+        }
+    }
+
+    private static void ResolveDeckNames(
+        IEnumerable<InstalledDeckRecord> decks,
+        IReadOnlyDictionary<string, string> localizedText)
+    {
+        foreach (InstalledDeckRecord deck in decks)
+        {
+            if (!string.IsNullOrWhiteSpace(deck.Deck.Name)
+                && !InstalledDeckRecord.LooksTechnical(deck.Deck.Name))
+            {
+                continue;
+            }
+
+            string nameTag = deck.Deck.Name?.Trim() ?? string.Empty;
+            if (nameTag.Length > 0 && localizedText.TryGetValue(nameTag, out string? localizedName))
+            {
+                deck.ResolvedGameName = localizedName;
+                continue;
+            }
+
+            if (localizedText.TryGetValue(deck.FileName, out localizedName))
+            {
+                deck.ResolvedGameName = localizedName;
             }
         }
     }
