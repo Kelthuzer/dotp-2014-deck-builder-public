@@ -24,6 +24,7 @@ public partial class App : Application
             mainWindow.InstallCardReferenceScannerMenu();
             mainWindow.InstallCardTranslationEditor();
             mainWindow.InstallDeckBuildingAssistantMenu();
+            mainWindow.InstallRandomDeckMenu();
             mainWindow.InstallDeckAssistantDashboard();
             mainWindow.InstallCatalogTokenFilter();
             mainWindow.InstallCatalogSearchAndSort();
