@@ -6,12 +6,20 @@ public sealed record InstalledDeckRecord(string FileName, string Source, DeckDoc
 {
     public int Uid => Deck.Uid;
 
+    internal string? ResolvedGameName { get; set; }
+
     public string DisplayName => FriendlyName;
 
     public string FriendlyName
     {
         get
         {
+            if (!string.IsNullOrWhiteSpace(ResolvedGameName)
+                && !LooksTechnical(ResolvedGameName))
+            {
+                return ResolvedGameName.Trim();
+            }
+
             if (!string.IsNullOrWhiteSpace(Deck.Name)
                 && !LooksTechnical(Deck.Name))
             {
@@ -45,7 +53,7 @@ public sealed record InstalledDeckRecord(string FileName, string Source, DeckDoc
         ? string.Empty
         : $"Missing card definitions: {string.Join(", ", MissingCardReferences)}";
 
-    private static bool LooksTechnical(string value)
+    internal static bool LooksTechnical(string value)
     {
         string text = value.Trim();
         return text.StartsWith("DECK_", StringComparison.OrdinalIgnoreCase)
