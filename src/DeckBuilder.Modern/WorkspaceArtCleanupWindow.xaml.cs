@@ -257,7 +257,7 @@ public partial class WorkspaceArtCleanupWindow : Window
             ? $"{row.UsageStatus}  •  duplicate group {row.GroupNumber}  •  {row.Folder}"
             : $"{row.UsageStatus}  •  {row.Folder}";
         int copies = row.IsDuplicate
-            ? _allRows.Count(candidate => candidate.GroupKey!.Equals(row.GroupKey, StringComparison.OrdinalIgnoreCase))
+            ? _allRows.Count(candidate => string.Equals(candidate.GroupKey, row.GroupKey, StringComparison.OrdinalIgnoreCase))
             : 1;
         PreviewInfo.Text = $"Kind: {row.Kind}\nCopies: {copies}\nSize: {row.SizeText}";
         PreviewUsage.Text = row.Kind == GameImageKind.Illustration
@@ -299,11 +299,14 @@ public partial class WorkspaceArtCleanupWindow : Window
     private static GameImageKind InferArtKind(string relativePath)
     {
         string normalized = relativePath.Replace('/', '\\');
-        if (normalized.Contains("\\ILLUSTRATION\\", StringComparison.OrdinalIgnoreCase)) return GameImageKind.Illustration;
-        if (normalized.Contains("\\FRAME\\", StringComparison.OrdinalIgnoreCase)) return GameImageKind.Frame;
+        if (normalized.Contains("\\ILLUSTRATIONS\\", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("\\ILLUSTRATION\\", StringComparison.OrdinalIgnoreCase)) return GameImageKind.Illustration;
+        if (normalized.Contains("\\FRAME\\", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("\\CARD_FRAMES\\", StringComparison.OrdinalIgnoreCase)) return GameImageKind.Frame;
         if (normalized.Contains("\\MANA\\", StringComparison.OrdinalIgnoreCase)) return GameImageKind.Mana;
         if (normalized.Contains("\\DECKS\\", StringComparison.OrdinalIgnoreCase)) return GameImageKind.Deck;
-        if (normalized.Contains("\\PERSONALITY\\", StringComparison.OrdinalIgnoreCase)) return GameImageKind.Personality;
+        if (normalized.Contains("\\PERSONALITY\\", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("\\PLANESWALKERS\\", StringComparison.OrdinalIgnoreCase)) return GameImageKind.Personality;
         return GameImageKind.Texture;
     }
 
