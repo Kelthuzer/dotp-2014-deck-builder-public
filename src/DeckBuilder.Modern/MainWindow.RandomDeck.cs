@@ -69,7 +69,8 @@ public partial class MainWindow
                 dialog.IncludeColorless,
                 dialog.SelectedCreatureType,
                 dialog.ArtifactsOnly,
-                dialog.SelectedRarities);
+                dialog.SelectedRarities,
+                dialog.LandCount);
         }
         catch (Exception exception)
         {
@@ -82,7 +83,8 @@ public partial class MainWindow
         bool includeColorless,
         string? selectedCreatureType,
         bool artifactsOnly,
-        IReadOnlySet<string> selectedRarities)
+        IReadOnlySet<string> selectedRarities,
+        int landCount)
     {
         if (selectedColors.Count == 0 && !includeColorless)
             throw new InvalidOperationException(AppLocalization.IsRussian
@@ -94,8 +96,13 @@ public partial class MainWindow
                 ? "Выберите хотя бы одну редкость карт."
                 : "Choose at least one card rarity.");
 
-        const int spellCount = 36;
-        const int landCount = 24;
+        if (landCount is < 0 or > 60)
+            throw new InvalidOperationException(AppLocalization.IsRussian
+                ? "Количество земель должно быть от 0 до 60."
+                : "Land count must be between 0 and 60.");
+
+        int spellCount = 60 - landCount;
+        int targetCreatureCount = Math.Min(16, spellCount);
 
         List<CardRecord> eligible = _catalog
             .Where(card => !card.IsToken && !card.IsMissingDefinition && !IsLand(card))
@@ -113,72 +120,70 @@ public partial class MainWindow
             .Select(group => PickRandom(group.ToList()))
             .ToList();
 
-        List<CardRecord> colored = eligible
-            .Where(card => ExtractSpellColors(card).Count > 0)
-            .ToList();
-        List<CardRecord> colorless = eligible
-            .Where(card => ExtractSpellColors(card).Count == 0)
-            .ToList();
-
-        if (!artifactsOnly && colored.Count < selectedColors.Count)
+        if (spellCount > 0 && eligible.Count == 0)
             throw new InvalidOperationException(AppLocalization.IsRussian
-                ? "В загруженном каталоге недостаточно карт выбранных цветов с текущими фильтрами."
-                : "The loaded catalog does not contain enough cards in the selected colors with the current filters.");
+                ? "С текущими фильтрами не найдено ни одной подходящей не-земли."
+                : "No eligible nonland cards matched the current filters.");
 
-        List<CardRecord> chosenSpells = new();
-        HashSet<string> chosenNames = new(StringComparer.OrdinalIgnoreCase);
-
-        if (!string.IsNullOrWhiteSpace(selectedCreatureType))
+        if (!artifactsOnly && spellCount > 0)
         {
-            List<CardRecord> tribalCandidates = eligible
-                .Where(card => IsCreature(card) && HasCreatureSubtype(card, selectedCreatureType))
-                .ToList();
-            if (tribalCandidates.Count == 0)
-                throw new InvalidOperationException(AppLocalization.IsRussian
-                    ? $"Не найдено существ типа «{selectedCreatureType}» с текущими фильтрами."
-                    : $"No {selectedCreatureType} creatures matched the current filters.");
-
-            CardRecord tribalCard = PickRandom(tribalCandidates);
-            chosenSpells.Add(tribalCard);
-            chosenNames.Add(CardIdentity(tribalCard));
-        }
-
-        // Guarantee that every requested color actually appears in the generated spell suite.
-        // Artifact-only and fully colorless modes may legitimately have no selected mana colors.
-        if (!artifactsOnly)
-        {
-            foreach (char color in selectedColors.OrderBy(color => "WUBRG".IndexOf(color)))
+            foreach (char color in selectedColors)
             {
-                List<CardRecord> candidates = colored
-                    .Where(card => ExtractSpellColors(card).Contains(color))
-                    .Where(card => !chosenNames.Contains(CardIdentity(card)))
-                    .ToList();
-                if (candidates.Count == 0)
+                if (!eligible.Any(card => ExtractSpellColors(card).Contains(color)))
                     throw new InvalidOperationException(AppLocalization.IsRussian
-                        ? $"Не удалось найти отдельную карту для цвета {color} с текущими фильтрами."
-                        : $"Could not find a distinct spell for color {color} with the current filters.");
-
-                CardRecord card = PickRandom(candidates);
-                chosenSpells.Add(card);
-                chosenNames.Add(CardIdentity(card));
+                        ? $"Для цвета {color} не найдено подходящих карт с текущими фильтрами."
+                        : $"No eligible cards were found for color {color} with the current filters.");
             }
         }
 
-        int desiredColorless = includeColorless ? Math.Min(6, Math.Max(0, spellCount - chosenSpells.Count)) : 0;
-        int desiredColored = spellCount - desiredColorless;
+        List<CardRecord> spellSlots = new(spellCount);
+        Dictionary<string, int> copiesByCard = new(StringComparer.OrdinalIgnoreCase);
+        int colorlessLimit = !includeColorless
+            ? 0
+            : selectedColors.Count == 0 || artifactsOnly
+                ? spellCount
+                : Math.Min(6, spellCount);
 
-        AddRandomDistinct(colored, chosenSpells, chosenNames, desiredColored);
-        if (chosenSpells.Count < spellCount && desiredColorless > 0)
-            AddRandomDistinct(colorless, chosenSpells, chosenNames, spellCount);
-        if (chosenSpells.Count < spellCount)
-            AddRandomDistinct(colored, chosenSpells, chosenNames, spellCount);
-        if (chosenSpells.Count < spellCount)
-            AddRandomDistinct(colorless, chosenSpells, chosenNames, spellCount);
+        // Make sure every requested color is represented when there is room for spells.
+        if (!artifactsOnly && spellCount > 0)
+        {
+            HashSet<char> covered = new();
+            foreach (char color in selectedColors.OrderBy(color => "WUBRG".IndexOf(color)))
+            {
+                if (spellSlots.Count >= spellCount || covered.Contains(color))
+                    continue;
 
-        if (chosenSpells.Count < spellCount)
+                List<CardRecord> candidates = eligible
+                    .Where(card => ExtractSpellColors(card).Contains(color))
+                    .ToList();
+                CardRecord card = PickRandom(candidates);
+                AddCopies(card, spellSlots, copiesByCard, 1, spellCount, colorlessLimit);
+                foreach (char represented in ExtractSpellColors(card))
+                    covered.Add(represented);
+            }
+        }
+
+        List<CardRecord> creatures = eligible.Where(IsCreature).ToList();
+        List<CardRecord> nonCreatures = eligible.Where(card => !IsCreature(card)).ToList();
+
+        FillCreatureBatches(
+            creatures,
+            spellSlots,
+            copiesByCard,
+            targetCreatureCount,
+            spellCount,
+            colorlessLimit);
+
+        // Once the deck has roughly sixteen creatures, prefer non-creatures so the result does not
+        // accidentally become a 30-creature pile. If filters leave too few non-creatures, fall back
+        // to the entire eligible pool and finish the deck while respecting the four-copy limit.
+        FillSpellBatches(nonCreatures, spellSlots, copiesByCard, spellCount, colorlessLimit);
+        FillSpellBatches(eligible, spellSlots, copiesByCard, spellCount, colorlessLimit);
+
+        if (spellSlots.Count < spellCount)
             throw new InvalidOperationException(AppLocalization.IsRussian
-                ? $"С текущими фильтрами найдено только {chosenSpells.Count} уникальных не-земель. Нужно минимум {spellCount}."
-                : $"Only {chosenSpells.Count} unique nonland cards matched the current filters; at least {spellCount} are required.");
+                ? $"С текущими фильтрами и ограничением максимум 4 копии карты удалось набрать только {spellSlots.Count} из {spellCount} не-земель."
+                : $"With the current filters and the four-copy limit, only {spellSlots.Count} of {spellCount} nonland slots could be filled.");
 
         _deck = new DeckDocument();
         _editor = new DeckEditor(_deck);
@@ -196,11 +201,11 @@ public partial class MainWindow
         foreach (char color in selectedColors)
             _assistantColors.Add(color);
 
-        foreach (CardRecord card in chosenSpells.Take(spellCount))
+        foreach (CardRecord card in spellSlots)
             _editor.Add(card, DeckSection.MainDeck);
 
         Dictionary<char, int> demand = "WUBRG".ToDictionary(color => color, _ => 0);
-        foreach (CardRecord card in chosenSpells.Take(spellCount))
+        foreach (CardRecord card in spellSlots)
         {
             foreach (char color in card.CastingCost.ToUpperInvariant())
             {
@@ -214,6 +219,40 @@ public partial class MainWindow
                 demand[color] = 1;
         }
 
+        if (landCount > 0)
+            AddRandomBasicLands(selectedColors, demand, landCount);
+
+        SetDirty(true);
+        RefreshCollections();
+        UpdateDeckAssistantDashboard();
+
+        int creatureCount = spellSlots.Count(IsCreature);
+        int uniqueSpellCount = spellSlots
+            .Select(CardIdentity)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+        string mana = selectedColors.Count == 0
+            ? (AppLocalization.IsRussian ? "бесцветная" : "colorless")
+            : string.Join("/", "WUBRG".Where(selectedColors.Contains));
+        List<string> activeFilters = new();
+        if (!string.IsNullOrWhiteSpace(selectedCreatureType))
+            activeFilters.Add(AppLocalization.IsRussian ? $"тип {selectedCreatureType}" : $"type {selectedCreatureType}");
+        if (artifactsOnly)
+            activeFilters.Add(AppLocalization.IsRussian ? "только артефакты" : "artifacts only");
+        if (selectedRarities.Count < 4)
+            activeFilters.Add((AppLocalization.IsRussian ? "редкость " : "rarity ") + string.Join('/', selectedRarities.OrderBy(value => value)));
+        string suffix = activeFilters.Count == 0 ? string.Empty : $" · {string.Join(", ", activeFilters)}";
+
+        Status(AppLocalization.IsRussian
+            ? $"Создана случайная колода: 60 карт, цвета {mana}, {spellCount} не-земель ({creatureCount} существ, {uniqueSpellCount} уникальных) + {landCount} земель{suffix}."
+            : $"Random deck created: 60 cards, {mana}, {spellCount} nonlands ({creatureCount} creatures, {uniqueSpellCount} unique) + {landCount} lands{suffix}.");
+    }
+
+    private void AddRandomBasicLands(
+        IReadOnlySet<char> selectedColors,
+        IReadOnlyDictionary<char, int> demand,
+        int landCount)
+    {
         if (selectedColors.Count == 0)
         {
             List<CardRecord> basicLands = _catalog
@@ -223,8 +262,7 @@ public partial class MainWindow
                 .Select(group => group.First())
                 .ToList();
 
-            // DotP 2014 normally has no Wastes. In a colorless deck any normal basic land can
-            // still pay generic artifact costs, so fall back to the available five basics.
+            // DotP 2014 normally has no Wastes. Any normal basic land still pays generic costs.
             if (basicLands.Count == 0)
             {
                 basicLands = _catalog
@@ -242,67 +280,140 @@ public partial class MainWindow
             Shuffle(basicLands);
             for (int index = 0; index < landCount; index++)
                 _editor.Add(basicLands[index % basicLands.Count], DeckSection.MainDeck);
+            return;
         }
-        else
+
+        Dictionary<char, List<CardRecord>> landsByColor = new();
+        foreach (char color in selectedColors)
         {
-            Dictionary<char, List<CardRecord>> landsByColor = new();
-            foreach (char color in selectedColors)
-            {
-                List<CardRecord> variants = _catalog
-                    .Where(card => IsBasicLand(card) && BasicLandColors(card).Contains(color))
-                    .GroupBy(card => card.FileName, StringComparer.OrdinalIgnoreCase)
-                    .Select(group => group.First())
-                    .ToList();
-                if (variants.Count == 0)
-                    throw new InvalidOperationException(AppLocalization.IsRussian
-                        ? $"Не найдена базовая земля для цвета {color}."
-                        : $"No basic land was found for color {color}.");
+            List<CardRecord> variants = _catalog
+                .Where(card => IsBasicLand(card) && BasicLandColors(card).Contains(color))
+                .GroupBy(card => card.FileName, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .ToList();
+            if (variants.Count == 0)
+                throw new InvalidOperationException(AppLocalization.IsRussian
+                    ? $"Не найдена базовая земля для цвета {color}."
+                    : $"No basic land was found for color {color}.");
 
-                Shuffle(variants);
-                landsByColor[color] = variants;
-            }
-
-            int totalDemand = selectedColors.Sum(color => demand[color]);
-            Dictionary<char, int> landTargets = selectedColors.ToDictionary(
-                color => color,
-                color => (int)Math.Floor(landCount * demand[color] / (double)totalDemand));
-            int assigned = landTargets.Values.Sum();
-            foreach (char color in selectedColors
-                         .OrderByDescending(color => landCount * demand[color] / (double)totalDemand - landTargets[color]))
-            {
-                if (assigned >= landCount)
-                    break;
-                landTargets[color]++;
-                assigned++;
-            }
-
-            foreach (char color in "WUBRG".Where(selectedColors.Contains))
-            {
-                List<CardRecord> variants = landsByColor[color];
-                for (int index = 0; index < landTargets[color]; index++)
-                    _editor.Add(variants[index % variants.Count], DeckSection.MainDeck);
-            }
+            Shuffle(variants);
+            landsByColor[color] = variants;
         }
 
-        SetDirty(true);
-        RefreshCollections();
-        UpdateDeckAssistantDashboard();
+        int totalDemand = selectedColors.Sum(color => demand[color]);
+        Dictionary<char, int> landTargets = selectedColors.ToDictionary(
+            color => color,
+            color => (int)Math.Floor(landCount * demand[color] / (double)totalDemand));
+        int assigned = landTargets.Values.Sum();
+        foreach (char color in selectedColors
+                     .OrderByDescending(color => landCount * demand[color] / (double)totalDemand - landTargets[color]))
+        {
+            if (assigned >= landCount)
+                break;
+            landTargets[color]++;
+            assigned++;
+        }
 
-        string mana = selectedColors.Count == 0
-            ? (AppLocalization.IsRussian ? "бесцветная" : "colorless")
-            : string.Join("/", "WUBRG".Where(selectedColors.Contains));
-        List<string> activeFilters = new();
-        if (!string.IsNullOrWhiteSpace(selectedCreatureType))
-            activeFilters.Add(AppLocalization.IsRussian ? $"тип {selectedCreatureType}" : $"type {selectedCreatureType}");
-        if (artifactsOnly)
-            activeFilters.Add(AppLocalization.IsRussian ? "только артефакты" : "artifacts only");
-        if (selectedRarities.Count < 4)
-            activeFilters.Add((AppLocalization.IsRussian ? "редкость " : "rarity ") + string.Join('/', selectedRarities.OrderBy(value => value)));
-        string suffix = activeFilters.Count == 0 ? string.Empty : $" · {string.Join(", ", activeFilters)}";
+        foreach (char color in "WUBRG".Where(selectedColors.Contains))
+        {
+            List<CardRecord> variants = landsByColor[color];
+            for (int index = 0; index < landTargets[color]; index++)
+                _editor.Add(variants[index % variants.Count], DeckSection.MainDeck);
+        }
+    }
 
-        Status(AppLocalization.IsRussian
-            ? $"Создана случайная колода: 60 карт, цвета {mana}, 36 не-земель + 24 базовые земли{suffix}."
-            : $"Random deck created: 60 cards, {mana}, 36 nonlands + 24 basic lands{suffix}.");
+    private static void FillCreatureBatches(
+        IReadOnlyList<CardRecord> source,
+        List<CardRecord> target,
+        IDictionary<string, int> copiesByCard,
+        int creatureTarget,
+        int spellTarget,
+        int colorlessLimit)
+    {
+        while (target.Count(IsCreature) < creatureTarget && target.Count < spellTarget)
+        {
+            int currentCreatureCount = target.Count(IsCreature);
+            List<CardRecord> candidates = AvailableCandidates(source, target, copiesByCard, colorlessLimit);
+            if (candidates.Count == 0)
+                return;
+
+            CardRecord card = PickRandom(candidates);
+            int wanted = RandomCopyBatch();
+            wanted = Math.Min(wanted, creatureTarget - currentCreatureCount);
+            AddCopies(card, target, copiesByCard, wanted, spellTarget, colorlessLimit);
+        }
+    }
+
+    private static void FillSpellBatches(
+        IReadOnlyList<CardRecord> source,
+        List<CardRecord> target,
+        IDictionary<string, int> copiesByCard,
+        int spellTarget,
+        int colorlessLimit)
+    {
+        while (target.Count < spellTarget)
+        {
+            List<CardRecord> candidates = AvailableCandidates(source, target, copiesByCard, colorlessLimit);
+            if (candidates.Count == 0)
+                return;
+
+            CardRecord card = PickRandom(candidates);
+            AddCopies(card, target, copiesByCard, RandomCopyBatch(), spellTarget, colorlessLimit);
+        }
+    }
+
+    private static List<CardRecord> AvailableCandidates(
+        IReadOnlyList<CardRecord> source,
+        IReadOnlyList<CardRecord> target,
+        IDictionary<string, int> copiesByCard,
+        int colorlessLimit)
+    {
+        int currentColorless = target.Count(card => ExtractSpellColors(card).Count == 0);
+        return source
+            .Where(card => copiesByCard.GetValueOrDefault(CardIdentity(card)) < 4)
+            .Where(card => ExtractSpellColors(card).Count > 0 || currentColorless < colorlessLimit)
+            .ToList();
+    }
+
+    private static void AddCopies(
+        CardRecord card,
+        ICollection<CardRecord> target,
+        IDictionary<string, int> copiesByCard,
+        int wantedCopies,
+        int spellTarget,
+        int colorlessLimit)
+    {
+        string identity = CardIdentity(card);
+        int existing = copiesByCard.GetValueOrDefault(identity);
+        int maxByCard = 4 - existing;
+        int maxByDeck = spellTarget - target.Count;
+        int maxByColorless = int.MaxValue;
+        if (ExtractSpellColors(card).Count == 0)
+        {
+            int currentColorless = target.Count(existingCard => ExtractSpellColors(existingCard).Count == 0);
+            maxByColorless = colorlessLimit - currentColorless;
+        }
+
+        int add = Math.Min(wantedCopies, Math.Min(maxByCard, Math.Min(maxByDeck, maxByColorless)));
+        for (int index = 0; index < add; index++)
+            target.Add(card);
+
+        if (add > 0)
+            copiesByCard[identity] = existing + add;
+    }
+
+    private static int RandomCopyBatch()
+    {
+        // Deliberately favor 2-3 copies so generated decks look like real constructed decks
+        // instead of singleton piles, while still allowing occasional one-ofs and four-ofs.
+        int roll = Random.Shared.Next(100);
+        return roll switch
+        {
+            < 20 => 1,
+            < 65 => 2,
+            < 90 => 3,
+            _ => 4
+        };
     }
 
     private static bool MatchesCreatureTypeFilter(CardRecord card, string? selectedCreatureType)
@@ -313,11 +424,9 @@ public partial class MainWindow
         return HasCreatureSubtype(card, selectedCreatureType);
     }
 
-    private static bool HasCreatureSubtype(CardRecord card, string subtype)
-    {
-        return CreatureSubtypes(card)
+    private static bool HasCreatureSubtype(CardRecord card, string subtype) =>
+        CreatureSubtypes(card)
             .Any(value => value.Equals(subtype.Trim(), StringComparison.OrdinalIgnoreCase));
-    }
 
     private static IReadOnlyList<string> CreatureSubtypes(CardRecord card)
     {
@@ -344,8 +453,6 @@ public partial class MainWindow
 
     private static bool MatchesRarityFilter(CardRecord card, IReadOnlySet<string> selectedRarities)
     {
-        // With all standard rarities enabled preserve the old generator behavior, including
-        // cards whose modded definitions use an unknown/non-standard rarity code.
         if (selectedRarities.Count >= 4)
             return true;
 
@@ -361,25 +468,6 @@ public partial class MainWindow
         "M" or "MYTHIC" or "MYTHIC RARE" => "M",
         _ => string.Empty
     };
-
-    private static void AddRandomDistinct(
-        IEnumerable<CardRecord> source,
-        ICollection<CardRecord> target,
-        ISet<string> chosenNames,
-        int targetCount)
-    {
-        List<CardRecord> candidates = source
-            .Where(card => !chosenNames.Contains(CardIdentity(card)))
-            .ToList();
-        Shuffle(candidates);
-        foreach (CardRecord card in candidates)
-        {
-            if (target.Count >= targetCount)
-                break;
-            target.Add(card);
-            chosenNames.Add(CardIdentity(card));
-        }
-    }
 
     private static T PickRandom<T>(IReadOnlyList<T> items)
     {
@@ -405,6 +493,7 @@ internal sealed class RandomDeckColorDialog : Window
     private readonly CheckBox _colorlessBox;
     private readonly CheckBox _artifactsOnlyBox;
     private readonly ComboBox _creatureTypeBox;
+    private readonly TextBox _landCountBox;
     private readonly string _anyCreatureTypeLabel;
 
     public HashSet<char> SelectedColors { get; } = new();
@@ -412,22 +501,20 @@ internal sealed class RandomDeckColorDialog : Window
     public bool IncludeColorless => _colorlessBox.IsChecked == true;
     public bool ArtifactsOnly => _artifactsOnlyBox.IsChecked == true;
     public string? SelectedCreatureType { get; private set; }
+    public int LandCount { get; private set; } = 24;
 
     public RandomDeckColorDialog(IReadOnlyList<CardRecord> catalog)
     {
         bool ru = AppLocalization.IsRussian;
         Title = ru ? "Случайная колода" : "Random deck";
         Width = 500;
-        Height = 660;
+        Height = 730;
         MinWidth = 450;
-        MinHeight = 560;
+        MinHeight = 620;
         ResizeMode = ResizeMode.CanResize;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
-        ScrollViewer scroll = new()
-        {
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto
-        };
+        ScrollViewer scroll = new() { VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         StackPanel root = new() { Margin = new Thickness(20) };
         scroll.Content = root;
         Content = scroll;
@@ -435,10 +522,26 @@ internal sealed class RandomDeckColorDialog : Window
         root.Children.Add(new TextBlock
         {
             Text = ru
-                ? "Выберите цвета и дополнительные фильтры. Генератор создаст новую колоду из 60 карт: 36 случайных не-земель и 24 базовые земли."
-                : "Choose mana colors and optional filters. The generator will create a new 60-card deck with 36 random nonlands and 24 basic lands.",
+                ? "Выберите цвета и фильтры. Колода всегда содержит 60 карт; генератор старается держать около 16 существ и использует до 4 копий одной карты."
+                : "Choose colors and filters. The deck always contains 60 cards; the generator aims for about 16 creatures and uses up to four copies of a card.",
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 14)
+        });
+
+        root.Children.Add(SectionTitle(ru ? "Количество земель" : "Land count"));
+        _landCountBox = new TextBox
+        {
+            Text = "24",
+            Width = 80,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(4, 4, 4, 8)
+        };
+        root.Children.Add(_landCountBox);
+        root.Children.Add(new TextBlock
+        {
+            Text = ru ? "От 0 до 60. Остальные места заполняются не-землями." : "0 to 60. Remaining slots are filled with nonlands.",
+            Opacity = 0.72,
+            Margin = new Thickness(4, 0, 4, 8)
         });
 
         root.Children.Add(SectionTitle(ru ? "Цвета маны" : "Mana colors"));
@@ -493,8 +596,8 @@ internal sealed class RandomDeckColorDialog : Window
         root.Children.Add(new TextBlock
         {
             Text = ru
-                ? "Если выбран тип, существа других типов исключаются; заклинания, не являющиеся существами, остаются доступными. Например: Elf, Goblin, Sliver."
-                : "When a type is selected, creatures of other types are excluded; noncreature spells remain eligible. Examples: Elf, Goblin, Sliver.",
+                ? "Если выбран тип, существа других типов исключаются; не-существа остаются доступными."
+                : "When a type is selected, creatures of other types are excluded; noncreature spells remain eligible.",
             TextWrapping = TextWrapping.Wrap,
             Opacity = 0.72,
             Margin = new Thickness(4, 2, 4, 8)
@@ -529,21 +632,11 @@ internal sealed class RandomDeckColorDialog : Window
         }
         root.Children.Add(rarityPanel);
 
-        TextBlock hint = new()
-        {
-            Text = ru
-                ? "Фильтры объединяются: например, «Elf» + «Только артефакты» оставит только артефактных существ-эльфов среди существ, а остальные не-существа тоже должны быть артефактами."
-                : "Filters are combined. For example, Elf + Artifacts only permits only artifact Elf creatures among creatures, while every noncreature spell must also be an artifact.",
-            TextWrapping = TextWrapping.Wrap,
-            Opacity = 0.75,
-            Margin = new Thickness(0, 6, 0, 14)
-        };
-        root.Children.Add(hint);
-
         StackPanel buttons = new()
         {
             Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 12, 0, 0)
         };
         Button randomColors = new()
         {
@@ -621,6 +714,20 @@ internal sealed class RandomDeckColorDialog : Window
 
     private void Accept()
     {
+        if (!int.TryParse(_landCountBox.Text.Trim(), out int landCount) || landCount is < 0 or > 60)
+        {
+            MessageBox.Show(
+                this,
+                AppLocalization.IsRussian ? "Введите количество земель от 0 до 60." : "Enter a land count from 0 to 60.",
+                AppLocalization.IsRussian ? "Количество земель" : "Land count",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            _landCountBox.Focus();
+            _landCountBox.SelectAll();
+            return;
+        }
+        LandCount = landCount;
+
         SelectedColors.Clear();
         foreach ((char color, CheckBox box) in _colorBoxes)
         {
