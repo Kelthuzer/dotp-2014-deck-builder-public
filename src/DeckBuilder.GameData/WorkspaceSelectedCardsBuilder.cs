@@ -55,10 +55,7 @@ public sealed class WorkspaceSelectedCardsBuilder
             .ToArray();
 
         HashSet<string> rootReferenceSet = rootReferences.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        HashSet<string> knownReferences = scan.CardVariants
-            .Select(variant => variant.Reference)
-            .Where(value => !string.IsNullOrWhiteSpace(value))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        IReadOnlyDictionary<string, string> referenceAliases = BuildReferenceAliases(scan.CardVariants);
 
         string output = Path.GetFullPath(outputPath);
         string outputDirectory = Path.GetDirectoryName(output)
@@ -151,7 +148,7 @@ public sealed class WorkspaceSelectedCardsBuilder
 
                 WorkspaceCardDependencyScanResult dependencyScan = WorkspaceCardDependencyResolver.Scan(
                     rawXml,
-                    knownReferences,
+                    referenceAliases,
                     canonicalReference);
 
                 foreach (string missingToken in dependencyScan.MissingTokenReferences)
@@ -246,6 +243,52 @@ public sealed class WorkspaceSelectedCardsBuilder
                 Directory.Delete(staging, recursive: true);
             }
         }
+    }
+
+    private static IReadOnlyDictionary<string, string> BuildReferenceAliases(
+        IReadOnlyList<WorkspaceContentVariant> variants)
+    {
+        Dictionary<string, HashSet<string>> candidates = new(StringComparer.OrdinalIgnoreCase);
+
+        foreach (WorkspaceContentVariant variant in variants)
+        {
+            if (string.IsNullOrWhiteSpace(variant.Reference))
+                continue;
+
+            string canonicalReference = variant.Reference.Trim();
+            AddAlias(candidates, canonicalReference, canonicalReference);
+
+            string sourceFileName = Path.GetFileNameWithoutExtension(variant.RelativePath);
+            if (!string.IsNullOrWhiteSpace(sourceFileName))
+                AddAlias(candidates, sourceFileName, canonicalReference);
+
+            if (!string.IsNullOrWhiteSpace(variant.ArtId))
+                AddAlias(candidates, variant.ArtId.Trim(), canonicalReference);
+        }
+
+        return candidates
+            .Where(pair => pair.Value.Count == 1)
+            .ToDictionary(
+                pair => pair.Key,
+                pair => pair.Value.Single(),
+                StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static void AddAlias(
+        IDictionary<string, HashSet<string>> aliases,
+        string alias,
+        string canonicalReference)
+    {
+        if (string.IsNullOrWhiteSpace(alias))
+            return;
+
+        if (!aliases.TryGetValue(alias, out HashSet<string>? references))
+        {
+            references = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            aliases[alias] = references;
+        }
+
+        references.Add(canonicalReference);
     }
 
     private static string? FindDeckTexture(string workspaceDirectory, string deckBoxImageId)
