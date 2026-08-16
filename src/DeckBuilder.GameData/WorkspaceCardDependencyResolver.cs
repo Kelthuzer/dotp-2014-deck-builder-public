@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
 
 namespace DeckBuilder.GameData;
 
@@ -21,6 +22,14 @@ internal static class WorkspaceCardDependencyResolver
         @"(?<![A-Za-z0-9_])TOKEN_[A-Za-z0-9_]+(?![A-Za-z0-9_])",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
+    // These are XML/schema identifiers, not CARD_V2 FILENAME references. In particular,
+    // TOKEN_REGISTRATION appears in ordinary basic-land definitions and used to produce dozens
+    // of false "missing token" warnings during support-WAD packaging.
+    private static readonly HashSet<string> IgnoredTokenIdentifiers = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "TOKEN_REGISTRATION"
+    };
+
     public static WorkspaceCardDependencyScanResult Scan(
         string xml,
         IReadOnlyDictionary<string, string> referenceAliases,
@@ -32,24 +41,32 @@ internal static class WorkspaceCardDependencyResolver
         HashSet<string> references = new(StringComparer.OrdinalIgnoreCase);
         HashSet<string> missingTokens = new(StringComparer.OrdinalIgnoreCase);
 
-        foreach (Match match in IdentifierRegex.Matches(xml))
+        // Scan XML payload values rather than element/attribute names. Schema names such as
+        // TOKEN_REGISTRATION describe the card format; only values/text can name another card.
+        foreach (string payload in ExtractPayloadValues(xml))
         {
-            string candidate = match.Value;
-            if (!referenceAliases.TryGetValue(candidate, out string? canonicalReference)
-                || canonicalReference.Equals(currentReference, StringComparison.OrdinalIgnoreCase))
+            foreach (Match match in IdentifierRegex.Matches(payload))
             {
-                continue;
+                string candidate = match.Value;
+                if (!referenceAliases.TryGetValue(candidate, out string? canonicalReference)
+                    || canonicalReference.Equals(currentReference, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                references.Add(canonicalReference);
             }
 
-            references.Add(canonicalReference);
-        }
-
-        foreach (Match match in TokenRegex.Matches(xml))
-        {
-            string candidate = match.Value;
-            if (!candidate.Equals(currentReference, StringComparison.OrdinalIgnoreCase)
-                && !referenceAliases.ContainsKey(candidate))
+            foreach (Match match in TokenRegex.Matches(payload))
             {
+                string candidate = match.Value;
+                if (IgnoredTokenIdentifiers.Contains(candidate)
+                    || candidate.Equals(currentReference, StringComparison.OrdinalIgnoreCase)
+                    || referenceAliases.ContainsKey(candidate))
+                {
+                    continue;
+                }
+
                 missingTokens.Add(candidate);
             }
         }
@@ -57,5 +74,34 @@ internal static class WorkspaceCardDependencyResolver
         return new WorkspaceCardDependencyScanResult(
             references.OrderBy(value => value, StringComparer.OrdinalIgnoreCase).ToArray(),
             missingTokens.OrderBy(value => value, StringComparer.OrdinalIgnoreCase).ToArray());
+    }
+
+    private static IEnumerable<string> ExtractPayloadValues(string xml)
+    {
+        XDocument document;
+        try
+        {
+            document = XDocument.Parse(xml, LoadOptions.PreserveWhitespace);
+        }
+        catch
+        {
+            // CARD_V2 definitions are expected to be valid XML, but keep dependency discovery
+            // functional for damaged/modded definitions. Known schema identifiers are still
+            // filtered by IgnoredTokenIdentifiers in the caller.
+            yield return xml;
+            yield break;
+        }
+
+        foreach (XAttribute attribute in document.Descendants().Attributes())
+        {
+            if (!string.IsNullOrWhiteSpace(attribute.Value))
+                yield return attribute.Value;
+        }
+
+        foreach (XText text in document.DescendantNodes().OfType<XText>())
+        {
+            if (!string.IsNullOrWhiteSpace(text.Value))
+                yield return text.Value;
+        }
     }
 }
