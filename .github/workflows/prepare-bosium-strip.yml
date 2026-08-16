@@ -1,0 +1,148 @@
+name: Prepare Bosium Strip TDX
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/prepare-bosium-strip.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source without external actions
+        shell: bash
+        env:
+          REPOSITORY_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          credentials=$(printf 'x-access-token:%s' "$REPOSITORY_TOKEN" | base64 -w0)
+          git init .
+          git remote add origin "https://github.com/$GITHUB_REPOSITORY.git"
+          git -c "http.extraHeader=Authorization: Basic $credentials" fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git checkout --detach "$GITHUB_SHA"
+
+      - name: Build exact Weatherlight Bösium Strip TDX
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check Pillow
+          mkdir -p generated
+          python - <<'PY'
+          import hashlib
+          import io
+          import json
+          import math
+          import struct
+          import urllib.request
+          from pathlib import Path
+          from PIL import Image
+
+          API = 'https://api.scryfall.com/cards/wth/147'
+          USER_AGENT = 'DotP2014DeckBuilder-BosiumStrip/1.0 (+https://github.com/Kelthuzer/dotp-2014-deck-builder-public)'
+
+          def download(url, accept):
+              request = urllib.request.Request(url, headers={'User-Agent': USER_AGENT, 'Accept': accept})
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  return response.read()
+
+          card = json.loads(download(API, 'application/json').decode('utf-8'))
+          if card.get('name') != 'Bösium Strip':
+              raise RuntimeError(f"Unexpected Scryfall card: {card.get('name')!r}")
+          if card.get('set', '').lower() != 'wth' or str(card.get('collector_number')) != '147':
+              raise RuntimeError('Unexpected printing; expected Weatherlight #147.')
+          if card.get('artist') != 'Steve Luke':
+              raise RuntimeError(f"Unexpected artist: {card.get('artist')!r}")
+
+          art_url = card.get('image_uris', {}).get('art_crop')
+          if not art_url:
+              raise RuntimeError('Scryfall did not provide image_uris.art_crop.')
+          source = download(art_url, 'image/*')
+
+          with Image.open(io.BytesIO(source)) as opened:
+              src = opened.convert('RGB')
+
+          target_w, target_h = 512, 376
+          scale = max(target_w / src.width, target_h / src.height)
+          scaled_w = math.ceil(src.width * scale)
+          scaled_h = math.ceil(src.height * scale)
+          resized = src.resize((scaled_w, scaled_h), Image.Resampling.LANCZOS)
+          left = (scaled_w - target_w) // 2
+          top = (scaled_h - target_h) // 2
+          image = resized.crop((left, top, left + target_w, top + target_h))
+          if image.size != (512, 376):
+              raise RuntimeError(f'Unexpected prepared image size: {image.size}')
+
+          png_path = Path('generated/BOSIUM_STRIP.png')
+          image.save(png_path, format='PNG')
+
+          dds = io.BytesIO()
+          image.save(dds, format='DDS', pixel_format='DXT1')
+          dds_bytes = dds.getvalue()
+          if dds_bytes[:4] != b'DDS ' or len(dds_bytes) < 128:
+              raise RuntimeError('Pillow did not produce a valid DDS container.')
+
+          payload = dds_bytes[128:]
+          expected_payload = target_w * target_h // 2
+          if len(payload) != expected_payload:
+              raise RuntimeError(f'Unexpected DXT1 payload size: {len(payload)} != {expected_payload}')
+
+          # Gibbed/DotP TDX: 16-byte little-endian header followed by raw DXT1 blocks.
+          # magic=512, width=512, height=376, mipCount=1, flags=0, D3DFormat='DXT1'.
+          tdx_header = struct.pack('<HHHHII', 512, target_w, target_h, 1, 0, 0x31545844)
+          tdx = tdx_header + payload
+          if len(tdx) != 96272:
+              raise RuntimeError(f'Unexpected TDX size: {len(tdx)}')
+
+          tdx_path = Path('generated/BOSIUM_STRIP.TDX')
+          tdx_path.write_bytes(tdx)
+          sha256 = hashlib.sha256(tdx).hexdigest()
+
+          metadata = {
+              'name': card['name'],
+              'set': card['set'],
+              'collector_number': card['collector_number'],
+              'artist': card['artist'],
+              'scryfall_id': card['id'],
+              'art_crop': art_url,
+              'prepared_size': [target_w, target_h],
+              'format': 'DXT1',
+              'mip_count': 1,
+              'tdx_size': len(tdx),
+              'sha256': sha256,
+          }
+          Path('generated/BOSIUM_STRIP.json').write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          print(json.dumps(metadata, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Verify TDX header
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import struct
+          from pathlib import Path
+          data = Path('generated/BOSIUM_STRIP.TDX').read_bytes()
+          values = struct.unpack('<HHHHII', data[:16])
+          expected = (512, 512, 376, 1, 0, 0x31545844)
+          print('header=', values)
+          print('bytes=', len(data))
+          if values != expected:
+              raise SystemExit(f'TDX header mismatch: {values!r} != {expected!r}')
+          PY
+
+      - name: Upload prepared TDX to Continuous release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view continuous --repo "$GITHUB_REPOSITORY" >/dev/null
+          gh release upload continuous \
+            generated/BOSIUM_STRIP.TDX \
+            generated/BOSIUM_STRIP.json \
+            --clobber \
+            --repo "$GITHUB_REPOSITORY"
