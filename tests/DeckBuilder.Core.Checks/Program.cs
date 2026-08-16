@@ -18,6 +18,7 @@ var checks = new (string Name, Action Run)[]
     ("standalone legacy unlock XML import", CheckStandaloneUnlockXmlImport),
     ("managed DXT card art decoding", CheckManagedDxtDecoding),
     ("card frame and mana visual metadata", CheckCardVisualMetadata),
+    ("multiplayer content-pack ID safety", CheckMultiplayerContentPackIds),
     ("atomic game WAD export", CheckGameWadExport)
 };
 
@@ -342,6 +343,23 @@ static void CheckCardVisualMetadata()
     Equal("UB_ARTIFACT_HYBRID", CardVisualMetadata.FromCard(hybrid).FrameId);
 }
 
+static void CheckMultiplayerContentPackIds()
+{
+    Equal(10, MultiplayerDeckIdPlanner.PlayerPresets.Count);
+    Equal(1000, MultiplayerDeckIdPlanner.PlayerPresets[0].IdBlock);
+    Equal(1009, MultiplayerDeckIdPlanner.PlayerPresets[^1].IdBlock);
+    Equal(100000, MultiplayerDeckIdPlanner.PlayerPresets[0].FirstDeckUid);
+    Equal("Data_DLC_1000_Content_Pack_Enabler.wad",
+        MultiplayerDeckIdPlanner.PlayerPresets[0].ContentPackEnablerFileName);
+
+    True(MultiplayerDeckIdPlanner.IsSafeContentPackId(1000), "Control content-pack 1000 must be allowed.");
+    True(MultiplayerDeckIdPlanner.IsSafeContentPackId(8191), "The last safe bit-table index must be allowed.");
+    True(!MultiplayerDeckIdPlanner.IsSafeContentPackId(8192), "8192 must be rejected as out of the multiplayer bit table.");
+    True(!MultiplayerDeckIdPlanner.IsSafeContentPackId(9100), "The dump-proven crashing content-pack 9100 must be rejected.");
+    Throws<ArgumentOutOfRangeException>(() => MultiplayerDeckIdPlanner.DeckUid(9100, 0));
+    Throws<ArgumentOutOfRangeException>(() => MultiplayerDeckIdPlanner.SuggestSlot(string.Empty, 9100));
+}
+
 static void CheckGameWadExport()
 {
     string directory = Path.Combine(Path.GetTempPath(), $"deck-builder-wad-{Guid.NewGuid():N}");
@@ -373,6 +391,7 @@ static void CheckGameWadExport()
         ModernWadExportResult first = ModernWadExporter.Export(deck, catalog, options);
         True(File.Exists(first.WadPath), "The game WAD must be written.");
         True(File.Exists(first.ContentPackEnablerPath), "The content-pack enabler must be written.");
+        Equal("Data_DLC_1000_Content_Pack_Enabler.wad", Path.GetFileName(first.ContentPackEnablerPath));
         Equal(100007, first.DeckUid);
         Equal(1000107, first.LandPoolUid);
 
