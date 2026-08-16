@@ -14,13 +14,16 @@ public sealed record MultiplayerIdBlockPreset(int PlayerNumber, int IdBlock)
 
 public static class MultiplayerDeckIdPlanner
 {
-    // These blocks are reserved by this project for a private 10-player setup.
-    // The historical SlightlyMagic Prefix/Id Registry is no longer reliably reachable;
-    // archived forum searches did not find DotP 2014 uses of 9100-9109. Keep the list
-    // centralized so it can be changed without touching export logic.
+    public const int MinimumCustomContentPackId = 1000;
+    public const int MaximumSafeContentPackId = 8191;
+
+    // DotP_D14.exe multiplayer crash dumps show content_pack being used as an index into a
+    // fixed-size bit table. The former 9100-9109 presets therefore indexed past the table and
+    // crashed the host with 0xC0000005. Keep custom multiplayer content-pack IDs below 8192.
+    // Player 1 deliberately starts at 1000 for the control test.
     public static IReadOnlyList<MultiplayerIdBlockPreset> PlayerPresets { get; } =
         Enumerable.Range(0, 10)
-            .Select(index => new MultiplayerIdBlockPreset(index + 1, 9100 + index))
+            .Select(index => new MultiplayerIdBlockPreset(index + 1, 1000 + index))
             .ToArray();
 
     public static MultiplayerIdBlockPreset GetPlayerPreset(int playerNumber)
@@ -31,9 +34,24 @@ public static class MultiplayerDeckIdPlanner
         return PlayerPresets[playerNumber - 1];
     }
 
+    public static bool IsSafeContentPackId(int idBlock) =>
+        idBlock is >= MinimumCustomContentPackId and <= MaximumSafeContentPackId;
+
+    public static void ValidateContentPackId(int idBlock)
+    {
+        if (!IsSafeContentPackId(idBlock))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(idBlock),
+                idBlock,
+                $"DotP 2014 custom content_pack must be between {MinimumCustomContentPackId} and {MaximumSafeContentPackId}. " +
+                "IDs 8192 and above are blocked because the game indexes content_pack into a fixed-size multiplayer bit table.");
+        }
+    }
+
     public static int SuggestSlot(string gameDirectory, int idBlock, int preferredDeckUid = -1)
     {
-        ValidateIdBlock(idBlock);
+        ValidateContentPackId(idBlock);
 
         int preferred = SlotFromDeckUid(preferredDeckUid, idBlock);
         IReadOnlySet<int> used = FindUsedSlots(gameDirectory, idBlock);
@@ -51,7 +69,7 @@ public static class MultiplayerDeckIdPlanner
 
     public static int DeckUid(int idBlock, int slot)
     {
-        ValidateIdBlock(idBlock);
+        ValidateContentPackId(idBlock);
         if (slot is < 0 or > 99)
             throw new ArgumentOutOfRangeException(nameof(slot), "Deck slot must be between 0 and 99.");
 
@@ -60,7 +78,7 @@ public static class MultiplayerDeckIdPlanner
 
     public static int SlotFromDeckUid(int uid, int idBlock)
     {
-        ValidateIdBlock(idBlock);
+        ValidateContentPackId(idBlock);
         if (uid < 0)
             return -1;
 
@@ -76,7 +94,7 @@ public static class MultiplayerDeckIdPlanner
 
     public static IReadOnlySet<int> FindUsedSlots(string gameDirectory, int idBlock)
     {
-        ValidateIdBlock(idBlock);
+        ValidateContentPackId(idBlock);
         HashSet<int> used = new();
         if (string.IsNullOrWhiteSpace(gameDirectory) || !Directory.Exists(gameDirectory))
             return used;
@@ -98,11 +116,5 @@ public static class MultiplayerDeckIdPlanner
         }
 
         return used;
-    }
-
-    private static void ValidateIdBlock(int idBlock)
-    {
-        if (idBlock is < 1000 or > 9999)
-            throw new ArgumentOutOfRangeException(nameof(idBlock), "DotP 2014 custom ID block must be a four-digit value.");
     }
 }
