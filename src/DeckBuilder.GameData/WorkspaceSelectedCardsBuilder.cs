@@ -22,8 +22,10 @@ public sealed record WorkspaceSelectedCardsBuildResult(
     IReadOnlyList<string> Warnings);
 
 /// <summary>
-/// Creates a small support WAD containing only card definitions/art actually referenced by the
-/// deck being exported. Variant decisions are supplied by the UI after the deck is already built.
+/// Creates a small support WAD containing card definitions/art referenced by the deck being
+/// exported, including recursive CARD_V2 dependencies used by card mechanics (tokens, generated
+/// cards and other referenced card definitions). Variant decisions are supplied by the UI after
+/// the deck is already built.
 /// </summary>
 public sealed class WorkspaceSelectedCardsBuilder
 {
@@ -45,6 +47,19 @@ public sealed class WorkspaceSelectedCardsBuilder
         ArgumentNullException.ThrowIfNull(references);
         ArgumentNullException.ThrowIfNull(scan);
 
+        string[] rootReferences = references
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        HashSet<string> rootReferenceSet = rootReferences.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        HashSet<string> knownReferences = scan.CardVariants
+            .Select(variant => variant.Reference)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         string output = Path.GetFullPath(outputPath);
         string outputDirectory = Path.GetDirectoryName(output)
             ?? throw new DirectoryNotFoundException("The support WAD output directory is missing.");
@@ -61,45 +76,57 @@ public sealed class WorkspaceSelectedCardsBuilder
 
             List<WorkspaceSelectedCardSource> sources = new();
             List<string> warnings = new();
+            HashSet<string> warningKeys = new(StringComparer.OrdinalIgnoreCase);
             HashSet<string> copiedArt = new(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> scheduledReferences = new(StringComparer.OrdinalIgnoreCase);
+            Queue<(string Reference, string? Parent)> pending = new();
 
-            foreach (string reference in references
-                         .Where(value => !string.IsNullOrWhiteSpace(value))
-                         .Select(value => value.Trim())
-                         .Distinct(StringComparer.OrdinalIgnoreCase)
-                         .OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
+            foreach (string reference in rootReferences)
+            {
+                if (scheduledReferences.Add(reference))
+                    pending.Enqueue((reference, null));
+            }
+
+            while (pending.Count > 0)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                (string reference, string? parent) = pending.Dequeue();
+
                 WorkspaceContentVariant[] variants = scan.CardVariants
                     .Where(item => item.Reference.Equals(reference, StringComparison.OrdinalIgnoreCase))
                     .ToArray();
                 if (variants.Length == 0)
                 {
-                    warnings.Add($"No extracted CARD_V2 definition was found for {reference}; the deck will still keep the exact reference.");
+                    string warning = parent is null
+                        ? $"No extracted CARD_V2 definition was found for {reference}; the deck will still keep the exact reference."
+                        : $"Referenced CARD_V2 dependency {reference} required by {parent} was not found in the extracted workspace.";
+                    if (warningKeys.Add(warning))
+                        warnings.Add(warning);
                     continue;
                 }
 
                 WorkspaceContentVariant selected = ResolveVariant(reference, variants, scan.Conflicts, selections);
+                string canonicalReference = string.IsNullOrWhiteSpace(selected.Reference)
+                    ? reference
+                    : selected.Reference.Trim();
                 string extension = Path.GetExtension(selected.RelativePath);
-                string cardFileName = SanitizeFileName(reference) + (string.IsNullOrWhiteSpace(extension) ? ".XML" : extension);
+                string cardFileName = SanitizeFileName(canonicalReference) + (string.IsNullOrWhiteSpace(extension) ? ".XML" : extension);
                 string targetCard = Path.Combine(cardDirectory, cardFileName);
                 File.Copy(selected.StoragePath, targetCard, overwrite: true);
 
-                string? targetArt = null;
                 if (!string.IsNullOrWhiteSpace(selected.ArtStoragePath)
                     && File.Exists(selected.ArtStoragePath)
                     && !string.IsNullOrWhiteSpace(selected.ArtId))
                 {
                     string artFileName = SanitizeFileName(selected.ArtId) + ".TDX";
-                    targetArt = Path.Combine(artDirectory, artFileName);
                     if (copiedArt.Add(artFileName))
                     {
-                        File.Copy(selected.ArtStoragePath, targetArt, overwrite: true);
+                        File.Copy(selected.ArtStoragePath, Path.Combine(artDirectory, artFileName), overwrite: true);
                     }
                 }
 
                 sources.Add(new WorkspaceSelectedCardSource(
-                    reference,
+                    canonicalReference,
                     selected.PackageName,
                     selected.WadName,
                     selected.WadOrder,
@@ -108,9 +135,41 @@ public sealed class WorkspaceSelectedCardsBuilder
                     string.IsNullOrWhiteSpace(selected.ArtId) ? null : selected.ArtId,
                     selected.ArtStoragePath,
                     selected.ArtSha256));
+
+                string rawXml;
+                try
+                {
+                    rawXml = File.ReadAllText(selected.StoragePath);
+                }
+                catch (Exception exception)
+                {
+                    string warning = $"Could not inspect CARD_V2 dependencies for {canonicalReference}: {exception.Message}";
+                    if (warningKeys.Add(warning))
+                        warnings.Add(warning);
+                    continue;
+                }
+
+                WorkspaceCardDependencyScanResult dependencyScan = WorkspaceCardDependencyResolver.Scan(
+                    rawXml,
+                    knownReferences,
+                    canonicalReference);
+
+                foreach (string missingToken in dependencyScan.MissingTokenReferences)
+                {
+                    string warning = $"Token dependency {missingToken} referenced by {canonicalReference} was not found in the extracted workspace.";
+                    if (warningKeys.Add(warning))
+                        warnings.Add(warning);
+                }
+
+                foreach (string dependency in dependencyScan.References)
+                {
+                    if (scheduledReferences.Add(dependency))
+                        pending.Enqueue((dependency, canonicalReference));
+                }
             }
 
-            if (sources.Count == 0)
+            int packagedRootCards = sources.Count(source => rootReferenceSet.Contains(source.Reference));
+            if (packagedRootCards == 0)
             {
                 throw new InvalidDataException("None of the deck's cards have extracted definitions that can be packaged.");
             }
@@ -167,6 +226,8 @@ public sealed class WorkspaceSelectedCardsBuilder
                 order,
                 deckBoxImage = string.IsNullOrWhiteSpace(deckBoxImageId) ? null : deckBoxImageId,
                 customDeckBoxTexture = string.IsNullOrWhiteSpace(deckBoxTexturePath) ? null : Path.GetFullPath(deckBoxTexturePath),
+                rootCards = rootReferences,
+                dependencyCardCount = Math.Max(0, sources.Count - packagedRootCards),
                 cards = sources
             }, JsonOptions));
 
