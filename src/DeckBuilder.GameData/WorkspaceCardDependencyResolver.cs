@@ -23,8 +23,7 @@ internal static class WorkspaceCardDependencyResolver
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     // These are XML/schema identifiers, not CARD_V2 FILENAME references. In particular,
-    // TOKEN_REGISTRATION appears in ordinary basic-land definitions and used to produce dozens
-    // of false "missing token" warnings during support-WAD packaging.
+    // TOKEN_REGISTRATION appears in ordinary definitions and must never be reported as a token.
     private static readonly HashSet<string> IgnoredTokenIdentifiers = new(StringComparer.OrdinalIgnoreCase)
     {
         "TOKEN_REGISTRATION"
@@ -78,16 +77,18 @@ internal static class WorkspaceCardDependencyResolver
 
     private static IEnumerable<string> ExtractPayloadValues(string xml)
     {
-        XDocument document;
+        XDocument? document = null;
         try
         {
             document = XDocument.Parse(xml, LoadOptions.PreserveWhitespace);
         }
         catch
         {
-            // CARD_V2 definitions are expected to be valid XML, but keep dependency discovery
-            // functional for damaged/modded definitions. Known schema identifiers are still
-            // filtered by IgnoredTokenIdentifiers in the caller.
+            // Fall back to raw scanning below. The caller still filters known schema identifiers.
+        }
+
+        if (document is null)
+        {
             yield return xml;
             yield break;
         }
