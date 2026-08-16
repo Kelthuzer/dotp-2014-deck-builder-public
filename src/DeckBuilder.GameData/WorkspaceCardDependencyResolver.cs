@@ -23,11 +23,11 @@ internal static class WorkspaceCardDependencyResolver
 
     public static WorkspaceCardDependencyScanResult Scan(
         string xml,
-        IReadOnlySet<string> knownReferences,
+        IReadOnlyDictionary<string, string> referenceAliases,
         string currentReference)
     {
         ArgumentNullException.ThrowIfNull(xml);
-        ArgumentNullException.ThrowIfNull(knownReferences);
+        ArgumentNullException.ThrowIfNull(referenceAliases);
 
         HashSet<string> references = new(StringComparer.OrdinalIgnoreCase);
         HashSet<string> missingTokens = new(StringComparer.OrdinalIgnoreCase);
@@ -35,18 +35,20 @@ internal static class WorkspaceCardDependencyResolver
         foreach (Match match in IdentifierRegex.Matches(xml))
         {
             string candidate = match.Value;
-            if (candidate.Equals(currentReference, StringComparison.OrdinalIgnoreCase))
+            if (!referenceAliases.TryGetValue(candidate, out string? canonicalReference)
+                || canonicalReference.Equals(currentReference, StringComparison.OrdinalIgnoreCase))
+            {
                 continue;
+            }
 
-            if (knownReferences.Contains(candidate))
-                references.Add(candidate);
+            references.Add(canonicalReference);
         }
 
         foreach (Match match in TokenRegex.Matches(xml))
         {
             string candidate = match.Value;
             if (!candidate.Equals(currentReference, StringComparison.OrdinalIgnoreCase)
-                && !knownReferences.Contains(candidate))
+                && !referenceAliases.ContainsKey(candidate))
             {
                 missingTokens.Add(candidate);
             }
