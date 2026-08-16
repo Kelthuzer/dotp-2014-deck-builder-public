@@ -25,7 +25,7 @@ public partial class MainWindow
         int lands = _deck.MainDeck.Where(entry => IsLand(entry.Card)).Sum(entry => entry.Quantity);
         int spells = totalCards - lands;
         int artifacts = _deck.MainDeck
-            .Where(entry => !IsLand(entry.Card) && IsArtifact(entry.Card))
+            .Where(entry => !IsLand(entry.Card) && IsArtifactForAssistant(entry.Card))
             .Sum(entry => entry.Quantity);
 
         double averageManaValue = EstimateAverageManaValue();
@@ -274,7 +274,7 @@ public partial class MainWindow
         card.TypeLine.Contains("Land", StringComparison.OrdinalIgnoreCase)
         || card.TypeLine.Contains("Земл", StringComparison.OrdinalIgnoreCase);
 
-    private static bool IsArtifact(CardRecord card) =>
+    private static bool IsArtifactForAssistant(CardRecord card) =>
         card.TypeLine.Contains("Artifact", StringComparison.OrdinalIgnoreCase)
         || card.TypeLine.Contains("Артефакт", StringComparison.OrdinalIgnoreCase);
 
