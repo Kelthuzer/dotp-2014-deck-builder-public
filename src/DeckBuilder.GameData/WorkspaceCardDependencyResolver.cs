@@ -47,7 +47,7 @@ internal static class WorkspaceCardDependencyResolver
             foreach (Match match in IdentifierRegex.Matches(payload))
             {
                 string candidate = match.Value;
-                if (!referenceAliases.TryGetValue(candidate, out string? canonicalReference)
+                if (!TryResolveReferenceAlias(candidate, referenceAliases, out string canonicalReference)
                     || canonicalReference.Equals(currentReference, StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
@@ -62,7 +62,7 @@ internal static class WorkspaceCardDependencyResolver
                 if (IgnoredTokenIdentifiers.Contains(candidate)
                     || candidate.Equals(currentReference, StringComparison.OrdinalIgnoreCase)
                     || IsSelfAlias(candidate, currentReference)
-                    || referenceAliases.ContainsKey(candidate))
+                    || TryResolveReferenceAlias(candidate, referenceAliases, out _))
                 {
                     continue;
                 }
@@ -74,6 +74,38 @@ internal static class WorkspaceCardDependencyResolver
         return new WorkspaceCardDependencyScanResult(
             references.OrderBy(value => value, StringComparer.OrdinalIgnoreCase).ToArray(),
             missingTokens.OrderBy(value => value, StringComparer.OrdinalIgnoreCase).ToArray());
+    }
+
+    private static bool TryResolveReferenceAlias(
+        string candidate,
+        IReadOnlyDictionary<string, string> referenceAliases,
+        out string canonicalReference)
+    {
+        if (referenceAliases.TryGetValue(candidate, out string? exactReference))
+        {
+            canonicalReference = exactReference;
+            return true;
+        }
+
+        // Community/RSN card definitions commonly register helper tokens with an RSN_ prefixed
+        // CARD_V2 filename while abilities refer to the logical TOKEN_* name without that prefix.
+        // Resolve both directions so TOKEN_CONSTRUCT_* can package RSN_TOKEN_CONSTRUCT_* (and vice
+        // versa) instead of merely suppressing the missing-token warning.
+        string? alternate = candidate.StartsWith("RSN_TOKEN_", StringComparison.OrdinalIgnoreCase)
+            ? candidate[4..]
+            : candidate.StartsWith("TOKEN_", StringComparison.OrdinalIgnoreCase)
+                ? "RSN_" + candidate
+                : null;
+
+        if (alternate is not null
+            && referenceAliases.TryGetValue(alternate, out string? alternateReference))
+        {
+            canonicalReference = alternateReference;
+            return true;
+        }
+
+        canonicalReference = string.Empty;
+        return false;
     }
 
     private static bool IsSelfAlias(string candidate, string currentReference)
