@@ -11,6 +11,7 @@ namespace DeckBuilder.Modern;
 public partial class MainWindow
 {
     private readonly WorkspaceDeepPoolLoader _workspacePoolLoader = new();
+    private readonly WorkspacePayloadManifestRefresher _workspacePayloadManifestRefresher = new();
     private readonly WorkspaceSelectedCardsBuilder _workspaceSelectedCardsBuilder = new();
     private string? _workspaceDirectory;
     private WorkspaceContentVariantScanResult? _workspaceCardVariants;
@@ -37,10 +38,10 @@ public partial class MainWindow
             return;
         }
 
-        await LoadWorkspaceAsync(_workspaceDirectory);
+        await LoadWorkspaceAsync(_workspaceDirectory, rescanPayload: true);
     }
 
-    private async Task LoadWorkspaceAsync(string path)
+    private async Task LoadWorkspaceAsync(string path, bool rescanPayload = false)
     {
         if (_loading)
         {
@@ -54,6 +55,17 @@ public partial class MainWindow
         Cursor = Cursors.Wait;
         try
         {
+            if (rescanPayload)
+            {
+                SetLoadingIndicatorContext("Reloading unpacked workspace…", "Rescanning actual payload files…");
+                Status($"Workspace: rescanning all extracted payload files in {fullPath}…");
+                WorkspacePayloadRefreshResult refresh =
+                    await _workspacePayloadManifestRefresher.RefreshAsync(fullPath);
+                Status(
+                    $"Workspace: payload rescan complete — {refresh.FilesScanned:N0} file(s) scanned, " +
+                    $"{refresh.FilesAdded:N0} new file(s) registered in {refresh.ManifestsUpdated:N0} manifest(s).");
+            }
+
             Progress<CatalogLoadProgress> progress = new(value =>
                 Status($"Workspace: loading {value.Source} — {value.CardsLoaded:N0} cards…"));
             WorkspacePoolLoadResult result = await _workspacePoolLoader.LoadAsync(fullPath, progress);
