@@ -84,10 +84,10 @@ public partial class MainWindow
         bool artifactsOnly,
         IReadOnlySet<string> selectedRarities)
     {
-        if (selectedColors.Count == 0)
+        if (selectedColors.Count == 0 && !includeColorless)
             throw new InvalidOperationException(AppLocalization.IsRussian
-                ? "Выберите хотя бы один цвет маны."
-                : "Choose at least one mana color.");
+                ? "Выберите хотя бы один цвет маны или разрешите бесцветные карты."
+                : "Choose at least one mana color or allow colorless cards.");
 
         if (selectedRarities.Count == 0)
             throw new InvalidOperationException(AppLocalization.IsRussian
@@ -144,8 +144,7 @@ public partial class MainWindow
         }
 
         // Guarantee that every requested color actually appears in the generated spell suite.
-        // Artifact-only mode is allowed to be entirely colorless; the selected colors then define
-        // which colored artifacts are legal and which basic lands are added.
+        // Artifact-only and fully colorless modes may legitimately have no selected mana colors.
         if (!artifactsOnly)
         {
             foreach (char color in selectedColors.OrderBy(color => "WUBRG".IndexOf(color)))
@@ -186,6 +185,8 @@ public partial class MainWindow
         _projectPath = null;
 
         string colorCode = string.Concat("WUBRG".Where(selectedColors.Contains));
+        if (colorCode.Length == 0)
+            colorCode = AppLocalization.IsRussian ? "бесцветная" : "colorless";
         _projectName = AppLocalization.IsRussian
             ? $"Случайная {colorCode} колода"
             : $"Random {colorCode} deck";
@@ -213,49 +214,83 @@ public partial class MainWindow
                 demand[color] = 1;
         }
 
-        Dictionary<char, List<CardRecord>> landsByColor = new();
-        foreach (char color in selectedColors)
+        if (selectedColors.Count == 0)
         {
-            List<CardRecord> variants = _catalog
-                .Where(card => IsBasicLand(card) && BasicLandColors(card).Contains(color))
+            List<CardRecord> basicLands = _catalog
+                .Where(IsBasicLand)
+                .Where(card => BasicLandColors(card).Count == 0)
                 .GroupBy(card => card.FileName, StringComparer.OrdinalIgnoreCase)
                 .Select(group => group.First())
                 .ToList();
-            if (variants.Count == 0)
+
+            // DotP 2014 normally has no Wastes. In a colorless deck any normal basic land can
+            // still pay generic artifact costs, so fall back to the available five basics.
+            if (basicLands.Count == 0)
+            {
+                basicLands = _catalog
+                    .Where(IsBasicLand)
+                    .GroupBy(card => card.FileName, StringComparer.OrdinalIgnoreCase)
+                    .Select(group => group.First())
+                    .ToList();
+            }
+
+            if (basicLands.Count == 0)
                 throw new InvalidOperationException(AppLocalization.IsRussian
-                    ? $"Не найдена базовая земля для цвета {color}."
-                    : $"No basic land was found for color {color}.");
+                    ? "В загруженном каталоге не найдены базовые земли для бесцветной колоды."
+                    : "No basic lands were found for the colorless deck.");
 
-            Shuffle(variants);
-            landsByColor[color] = variants;
+            Shuffle(basicLands);
+            for (int index = 0; index < landCount; index++)
+                _editor.Add(basicLands[index % basicLands.Count], DeckSection.MainDeck);
         }
-
-        int totalDemand = selectedColors.Sum(color => demand[color]);
-        Dictionary<char, int> landTargets = selectedColors.ToDictionary(
-            color => color,
-            color => (int)Math.Floor(landCount * demand[color] / (double)totalDemand));
-        int assigned = landTargets.Values.Sum();
-        foreach (char color in selectedColors
-                     .OrderByDescending(color => landCount * demand[color] / (double)totalDemand - landTargets[color]))
+        else
         {
-            if (assigned >= landCount)
-                break;
-            landTargets[color]++;
-            assigned++;
-        }
+            Dictionary<char, List<CardRecord>> landsByColor = new();
+            foreach (char color in selectedColors)
+            {
+                List<CardRecord> variants = _catalog
+                    .Where(card => IsBasicLand(card) && BasicLandColors(card).Contains(color))
+                    .GroupBy(card => card.FileName, StringComparer.OrdinalIgnoreCase)
+                    .Select(group => group.First())
+                    .ToList();
+                if (variants.Count == 0)
+                    throw new InvalidOperationException(AppLocalization.IsRussian
+                        ? $"Не найдена базовая земля для цвета {color}."
+                        : $"No basic land was found for color {color}.");
 
-        foreach (char color in "WUBRG".Where(selectedColors.Contains))
-        {
-            List<CardRecord> variants = landsByColor[color];
-            for (int index = 0; index < landTargets[color]; index++)
-                _editor.Add(variants[index % variants.Count], DeckSection.MainDeck);
+                Shuffle(variants);
+                landsByColor[color] = variants;
+            }
+
+            int totalDemand = selectedColors.Sum(color => demand[color]);
+            Dictionary<char, int> landTargets = selectedColors.ToDictionary(
+                color => color,
+                color => (int)Math.Floor(landCount * demand[color] / (double)totalDemand));
+            int assigned = landTargets.Values.Sum();
+            foreach (char color in selectedColors
+                         .OrderByDescending(color => landCount * demand[color] / (double)totalDemand - landTargets[color]))
+            {
+                if (assigned >= landCount)
+                    break;
+                landTargets[color]++;
+                assigned++;
+            }
+
+            foreach (char color in "WUBRG".Where(selectedColors.Contains))
+            {
+                List<CardRecord> variants = landsByColor[color];
+                for (int index = 0; index < landTargets[color]; index++)
+                    _editor.Add(variants[index % variants.Count], DeckSection.MainDeck);
+            }
         }
 
         SetDirty(true);
         RefreshCollections();
         UpdateDeckAssistantDashboard();
 
-        string mana = string.Join("/", "WUBRG".Where(selectedColors.Contains));
+        string mana = selectedColors.Count == 0
+            ? (AppLocalization.IsRussian ? "бесцветная" : "colorless")
+            : string.Join("/", "WUBRG".Where(selectedColors.Contains));
         List<string> activeFilters = new();
         if (!string.IsNullOrWhiteSpace(selectedCreatureType))
             activeFilters.Add(AppLocalization.IsRussian ? $"тип {selectedCreatureType}" : $"type {selectedCreatureType}");
@@ -593,11 +628,13 @@ internal sealed class RandomDeckColorDialog : Window
                 SelectedColors.Add(color);
         }
 
-        if (SelectedColors.Count == 0)
+        if (SelectedColors.Count == 0 && _colorlessBox.IsChecked != true)
         {
             MessageBox.Show(
                 this,
-                AppLocalization.IsRussian ? "Выберите хотя бы один цвет маны." : "Choose at least one mana color.",
+                AppLocalization.IsRussian
+                    ? "Выберите хотя бы один цвет маны или включите бесцветные карты."
+                    : "Choose at least one mana color or enable colorless cards.",
                 AppLocalization.IsRussian ? "Цвета маны" : "Mana colors",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
