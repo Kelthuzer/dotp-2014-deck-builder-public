@@ -60,6 +60,8 @@ public static class ModernWadExporter
             throw new ArgumentOutOfRangeException(nameof(options), "The default DotP slot must be between 0 and 99.");
         }
 
+        MultiplayerDeckIdPlanner.ValidateContentPackId(options.IdBlock);
+
         if (deck.PromoUnlocks.Count > DeckDocument.MaximumPromoUnlocks)
         {
             throw new InvalidOperationException(
