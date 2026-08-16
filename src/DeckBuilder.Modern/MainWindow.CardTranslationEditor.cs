@@ -25,7 +25,7 @@ public partial class MainWindow
         gameData.Items.Add(new Separator());
         MenuItem editor = new()
         {
-            Header = AppLocalization.IsRussian ? "Редактор _карты…" : "Card _editor…"
+            Header = AppLocalization.Text("Card editor…")
         };
         editor.Click += CardTranslationEditor_Click;
         gameData.Items.Add(editor);

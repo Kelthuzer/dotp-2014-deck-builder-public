@@ -31,6 +31,7 @@ internal static class AppLocalization
             ["WAD Workshop…"] = "Мастерская WAD…",
             ["Build cards/decks from unpacked…"] = "Собрать карты/колоды из распакованных ресурсов…",
             ["Card reference scanner…"] = "Сканер ссылок карт…",
+            ["Card editor…"] = "Редактор карты…",
             ["Help"] = "Помощь",
             ["About modern build"] = "О программе",
             ["Settings…"] = "Настройки…",
