@@ -25,7 +25,7 @@ public partial class MainWindow
         gameData.Items.Add(new Separator());
         MenuItem editor = new()
         {
-            Header = AppLocalization.IsRussian ? "Редактор _перевода карты…" : "Card _translation editor…"
+            Header = AppLocalization.IsRussian ? "Редактор _карты…" : "Card _editor…"
         };
         editor.Click += CardTranslationEditor_Click;
         gameData.Items.Add(editor);
@@ -49,8 +49,8 @@ public partial class MainWindow
         {
             MessageBox.Show(this,
                 AppLocalization.IsRussian
-                    ? "Редактор пишет перевод прямо в CARD_V2 XML. Сначала загрузи распакованный workspace через «Данные игры → Загрузить распакованный workspace…»."
-                    : "The editor writes translations directly into CARD_V2 XML. Load an unpacked workspace first.",
+                    ? "Редактор пишет изменения прямо в CARD_V2 XML. Сначала загрузи распакованный workspace через «Данные игры → Загрузить распакованный workspace…»."
+                    : "The editor writes changes directly into CARD_V2 XML. Load an unpacked workspace first.",
                 AppLocalization.IsRussian ? "Нужен распакованный workspace" : "Unpacked workspace required",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
@@ -93,10 +93,13 @@ public partial class MainWindow
             return;
 
         Status(AppLocalization.IsRussian
-            ? $"Перевод {card.FileName} сохранён в XML; перечитываю workspace…"
-            : $"Saved {card.FileName} translation to XML; reloading workspace…");
+            ? $"Карта {card.FileName} сохранена в XML; перечитываю workspace…"
+            : $"Saved card {card.FileName} to XML; reloading workspace…");
 
-        await LoadWorkspaceAsync(_workspaceDirectory);
+        // Saving from the card editor may also install or replace a TDX illustration.
+        // Make the normal Reload unpacked reconciliation authoritative here as well so
+        // the manifest, catalog and image index immediately see every changed file.
+        await LoadWorkspaceAsync(_workspaceDirectory, rescanPayload: true);
 
         CardRecord? refreshed = _catalog.FirstOrDefault(item => item.FileName.Equals(card.FileName, StringComparison.OrdinalIgnoreCase));
         if (refreshed is not null)
