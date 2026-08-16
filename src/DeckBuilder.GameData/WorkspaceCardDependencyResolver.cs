@@ -61,6 +61,7 @@ internal static class WorkspaceCardDependencyResolver
                 string candidate = match.Value;
                 if (IgnoredTokenIdentifiers.Contains(candidate)
                     || candidate.Equals(currentReference, StringComparison.OrdinalIgnoreCase)
+                    || IsSelfAlias(candidate, currentReference)
                     || referenceAliases.ContainsKey(candidate))
                 {
                     continue;
@@ -73,6 +74,15 @@ internal static class WorkspaceCardDependencyResolver
         return new WorkspaceCardDependencyScanResult(
             references.OrderBy(value => value, StringComparer.OrdinalIgnoreCase).ToArray(),
             missingTokens.OrderBy(value => value, StringComparer.OrdinalIgnoreCase).ToArray());
+    }
+
+    private static bool IsSelfAlias(string candidate, string currentReference)
+    {
+        // Some DotP helper token definitions use an RSN_ prefixed CARD_V2 filename while their
+        // own payload refers to the same logical token without that implementation prefix, e.g.
+        // RSN_TOKEN_MANA_G -> TOKEN_MANA_G. This is not a dependency on a second CARD_V2.
+        return currentReference.StartsWith("RSN_", StringComparison.OrdinalIgnoreCase)
+            && candidate.Equals(currentReference[4..], StringComparison.OrdinalIgnoreCase);
     }
 
     private static IEnumerable<string> ExtractPayloadValues(string xml)
