@@ -200,6 +200,7 @@ public partial class MainWindow
                     wizard.CustomCoverSkin);
             }
 
+            Status("Упаковка: собираю CARD_V2 и portable runtime…");
             WorkspaceSelectedCardsBuildResult support = await _workspaceSelectedCardsBuilder.BuildAsync(
                 supportWadPath,
                 usedReferences,
@@ -208,8 +209,10 @@ public partial class MainWindow
                 workspaceDirectory: _workspaceDirectory,
                 deckBoxImageId: wizard.DeckBoxImage,
                 deckBoxTexturePath: generatedCoverTdx,
+                runtimeRootIdentifiers: GetAdditionalPortableRuntimeRoots(),
                 order: 50);
 
+            Status("Упаковка: собираю Deck WAD и Content Pack Enabler…");
             ModernWadExportOptions options = new(
                 wizard.OutputPath,
                 wizard.Slot,
@@ -237,7 +240,7 @@ public partial class MainWindow
                 $"Обложка: {coverMode} — {wizard.DeckBoxImage}\n\n" +
                 $"1. Deck WAD:\n{result.WadPath}\n\n" +
                 $"2. Cards/art/runtime WAD:\n{support.WadPath}\n" +
-                $"   CARD_V2: {support.CardCount}; иллюстраций: {support.ArtCount}; runtime-файлов всего: {support.BuildResult.FileCount}\n\n" +
+                $"   CARD_V2: {support.CardCount}; иллюстраций: {support.ArtCount}; runtime: {support.RuntimeResourceCount}; всего файлов: {support.BuildResult.FileCount}\n\n" +
                 $"3. {enablerText}\n\n" +
                 "Для переноса колоды другому игроку передавайте оба WAD колоды/ресурсов и CPE её ID-блока." +
                 warningText,
@@ -247,7 +250,7 @@ public partial class MainWindow
 
             Status(
                 $"Упакована колода {result.DeckUid}: deck WAD + {support.CardCount} CARD_V2 + " +
-                $"{support.ArtCount} illustrations + portable runtime ({support.BuildResult.FileCount} files) + " +
+                $"{support.ArtCount} illustrations + {support.RuntimeResourceCount} runtime resources + " +
                 $"{coverMode} deck cover {wizard.DeckBoxImage} + CPE {wizard.IdBlock}.");
         }
         catch (Exception exception)
@@ -270,6 +273,37 @@ public partial class MainWindow
             Cursor = null;
         }
     }
+
+    private IEnumerable<string> GetAdditionalPortableRuntimeRoots()
+    {
+        if (!string.IsNullOrWhiteSpace(_deck.DeckBoxImageLocked)
+            && !_deck.DeckBoxImageLocked.Equals("locked", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return DeckTexturePath(_deck.DeckBoxImageLocked);
+        }
+
+        DeckBuilder.Core.Models.AiPersonalityDefinition? personality = _deck.CustomPersonality;
+        if (personality is null)
+            yield break;
+
+        foreach (string imageId in new[]
+                 {
+                     personality.LargeAvatarImage,
+                     personality.SmallAvatarImage,
+                     personality.SmallAvatarLockedImage,
+                     personality.LobbyImage
+                 })
+        {
+            if (!string.IsNullOrWhiteSpace(imageId))
+                yield return PlaneswalkerTexturePath(imageId);
+        }
+    }
+
+    private static string DeckTexturePath(string imageId) =>
+        $"ART_ASSETS\\TEXTURES\\DECKS\\{Path.GetFileNameWithoutExtension(imageId.Trim())}.TDX";
+
+    private static string PlaneswalkerTexturePath(string imageId) =>
+        $"ART_ASSETS\\TEXTURES\\PLANESWALKERS\\{Path.GetFileNameWithoutExtension(imageId.Trim())}.TDX";
 
     private async Task<bool> EnsurePackagingWorkspaceAsync()
     {
