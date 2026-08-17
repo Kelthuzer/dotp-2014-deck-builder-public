@@ -30,9 +30,6 @@ internal sealed record WorkspaceSharedRuntimePackResult(
 /// </summary>
 internal static class WorkspaceSharedFunctionPackager
 {
-    // These namespaces are commonly reached through computed identifiers, so static dependency
-    // discovery cannot prove which individual file is required. They are small/central enough to
-    // carry as an effective merged runtime instead of risking a mechanically incomplete deck.
     private static readonly string[] AlwaysPackDirectories =
     {
         "FUNCTIONS",
@@ -157,8 +154,6 @@ internal static class WorkspaceSharedFunctionPackager
             return WorkspaceSharedRuntimePackResult.Empty;
         }
 
-        // Compute one effective workspace overlay first. This mirrors the rest of the modern
-        // workspace merger: greater WAD order wins; ties are resolved by WAD/package name.
         RuntimeCandidate[] effective = candidates
             .GroupBy(item => item.RelativePath, StringComparer.OrdinalIgnoreCase)
             .Select(group => group
@@ -183,9 +178,6 @@ internal static class WorkspaceSharedFunctionPackager
             }
         }
 
-        // The actual selected/recursive CARD_V2 files are the primary dependency roots. Do not
-        // scan every shared function globally; that would pull helper cards used only by unrelated
-        // mods. Instead, resolve the functions/resources named by these cards and recurse from them.
         string stagedCards = Path.Combine(stagingDirectory, "DATA_ALL_PLATFORMS", "CARDS");
         if (Directory.Exists(stagedCards))
         {
@@ -245,8 +237,6 @@ internal static class WorkspaceSharedFunctionPackager
                 Directory.CreateDirectory(targetDirectory);
             }
 
-            // A specifically selected CARD_V2 illustration/deck texture has higher intent than a
-            // generic runtime match. Never replace something the card/deck packager already staged.
             if (!File.Exists(target))
             {
                 File.Copy(resource.StoragePath, target, overwrite: false);
@@ -306,7 +296,7 @@ internal static class WorkspaceSharedFunctionPackager
                 discoveredCardReferences.Add(canonicalReference);
             }
 
-            if (!TryResolveResource(token, resourceAliases, out RuntimeCandidate? resource)
+            if (!TryResolveResource(token, resourceAliases, out RuntimeCandidate resource)
                 || !IsAllowedDependencyResource(resource.RelativePath))
             {
                 continue;
@@ -329,9 +319,6 @@ internal static class WorkspaceSharedFunctionPackager
         {
             AddResourceAliases(aliases, resource, ResourceAliases(resource.RelativePath));
 
-            // Community runtime files are normally Lua-like LOL text. Index declared function names
-            // as aliases too, so a CARD_V2 call such as CW_Tokens can locate CW_TOKENS.LOL and a
-            // helper named differently from its file can still seed the correct dependency chain.
             if (StartsWithDirectory(resource.RelativePath, "FUNCTIONS") && IsTextPath(resource.StoragePath))
             {
                 try
@@ -350,8 +337,7 @@ internal static class WorkspaceSharedFunctionPackager
                 }
                 catch
                 {
-                    // Dependency scanning later reports read failures for files that are actually
-                    // reached. An unrelated malformed function file must not abort package indexing.
+                    // An unrelated malformed function file must not abort package indexing.
                 }
             }
         }
@@ -369,7 +355,7 @@ internal static class WorkspaceSharedFunctionPackager
     private static bool TryResolveResource(
         string token,
         IReadOnlyDictionary<string, RuntimeCandidate[]> aliases,
-        out RuntimeCandidate? resource)
+        out RuntimeCandidate resource)
     {
         foreach (string alias in TokenAliases(token))
         {
@@ -383,7 +369,7 @@ internal static class WorkspaceSharedFunctionPackager
             return true;
         }
 
-        resource = null;
+        resource = null!;
         return false;
     }
 
