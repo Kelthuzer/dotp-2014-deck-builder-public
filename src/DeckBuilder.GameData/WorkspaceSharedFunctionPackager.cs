@@ -303,7 +303,7 @@ internal static class WorkspaceSharedFunctionPackager
             }
 
             selectedPaths.Add(resource.RelativePath);
-            if (IsTextPath(resource.StoragePath)
+            if (IsTextResource(resource)
                 && !scannedTextPaths.Contains(Path.GetFullPath(resource.StoragePath)))
             {
                 textQueue.Enqueue(resource);
@@ -319,7 +319,9 @@ internal static class WorkspaceSharedFunctionPackager
         {
             AddResourceAliases(aliases, resource, ResourceAliases(resource.RelativePath));
 
-            if (StartsWithDirectory(resource.RelativePath, "FUNCTIONS") && IsTextPath(resource.StoragePath))
+            // StoragePath is an extraction implementation detail and can be extensionless or .bin.
+            // Classify the payload using its original archive-relative name instead.
+            if (StartsWithDirectory(resource.RelativePath, "FUNCTIONS") && IsTextResource(resource))
             {
                 try
                 {
@@ -454,6 +456,9 @@ internal static class WorkspaceSharedFunctionPackager
 
     private static bool IsAllowedDependencyResource(string relativePath) =>
         !ForbiddenDependencyDirectories.Any(directory => StartsWithDirectory(relativePath, directory));
+
+    private static bool IsTextResource(RuntimeCandidate resource) =>
+        IsTextPath(resource.RelativePath);
 
     private static bool IsTextPath(string path) =>
         TextExtensions.Contains(Path.GetExtension(path));
