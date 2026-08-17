@@ -22,6 +22,14 @@ internal static class WorkspaceCardDependencyResolver
         @"(?<![A-Za-z0-9_])TOKEN_[A-Za-z0-9_]+(?![A-Za-z0-9_])",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
+    // Community WAD's CW_TOKENS.LOL uses logical token keys such as
+    // TOKEN_CONSTRUCT_AC_6_12_C_T_CW_1. Those keys encode token parameters and the selected art
+    // variant; they are not necessarily CARD_V2 filenames. If no exact CARD_V2 exists, the shared
+    // CW runtime resolves the key dynamically, so reporting it as a missing card is a false alarm.
+    private static readonly Regex CommunityDynamicTokenRegex = new(
+        @"^TOKEN_[A-Za-z0-9_]+_CW_[0-9]+$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
     // These are XML/schema identifiers, not CARD_V2 FILENAME references. In particular,
     // TOKEN_REGISTRATION appears in ordinary definitions and must never be reported as a token.
     private static readonly HashSet<string> IgnoredTokenIdentifiers = new(StringComparer.OrdinalIgnoreCase)
@@ -62,7 +70,8 @@ internal static class WorkspaceCardDependencyResolver
                 if (IgnoredTokenIdentifiers.Contains(candidate)
                     || candidate.Equals(currentReference, StringComparison.OrdinalIgnoreCase)
                     || IsSelfAlias(candidate, currentReference)
-                    || TryResolveReferenceAlias(candidate, referenceAliases, out _))
+                    || TryResolveReferenceAlias(candidate, referenceAliases, out _)
+                    || CommunityDynamicTokenRegex.IsMatch(candidate))
                 {
                     continue;
                 }
