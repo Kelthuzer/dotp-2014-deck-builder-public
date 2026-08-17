@@ -47,8 +47,7 @@ public sealed class WorkspaceSelectedCardsBuilder
         ArgumentNullException.ThrowIfNull(references);
         ArgumentNullException.ThrowIfNull(scan);
 
-        // The old implementation did workspace indexing and dependency expansion on the WPF UI
-        // thread. Keep the whole operation on one worker so large community workspaces stay usable.
+        // Keep indexing, dependency expansion, compression and validation off the WPF UI thread.
         return Task.Run(
             () => Build(
                 outputPath,
@@ -64,7 +63,7 @@ public sealed class WorkspaceSelectedCardsBuilder
             cancellationToken);
     }
 
-    private WorkspaceSelectedCardsBuildResult Build(
+    internal WorkspaceSelectedCardsBuildResult Build(
         string outputPath,
         IEnumerable<string> references,
         WorkspaceContentVariantScanResult scan,
@@ -190,9 +189,8 @@ public sealed class WorkspaceSelectedCardsBuilder
                         QueueCard(dependency, canonicalReference);
                 }
 
-                // Runtime can name another CARD_V2 by FILENAME/ARTID/MULTIVERSEID. Re-resolve only
-                // after the current card queue is exhausted; the expensive workspace index itself
-                // was already built once above.
+                // Runtime may name another CARD_V2 by FILENAME, ARTID or MULTIVERSEID. Re-resolve
+                // only after the card queue is empty; the expensive workspace index is reused.
                 runtime = runtimeIndex.Resolve(
                     cardXmlPaths,
                     runtimeRoots,
