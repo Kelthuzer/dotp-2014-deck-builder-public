@@ -29,8 +29,7 @@ internal static class PortableRuntimeChecks
 
             string AddPayload(string relativePath, string content)
             {
-                // Deliberately store every extracted resource as .bin. The portable resolver must
-                // classify text/binary payloads from ArchivePath, not from this storage filename.
+                // Version-package storage names are deliberately unrelated to archive extensions.
                 string storageRelative = $"payload/{storageId++:D3}.bin";
                 string storage = Path.Combine(wadDirectory, storageRelative.Replace('/', Path.DirectorySeparatorChar));
                 Directory.CreateDirectory(Path.GetDirectoryName(storage)!);
@@ -65,6 +64,7 @@ internal static class PortableRuntimeChecks
                   <ARTID value="10001" />
                   <MULTIVERSEID value="77777" />
                   <ABILITY function="CARD_BRIDGE" />
+                  <PORTABLE_TEST mana="CUSTOM_MANA" frame="CUSTOM_FRAME" choice="CUSTOM_CHOICE" />
                 </CARD_V2>
                 """);
             string helperCard = AddPayload("CARDS\\HELPER_TOKEN.XML", """
@@ -94,8 +94,9 @@ internal static class PortableRuntimeChecks
             AddBinaryPayload("ART_ASSETS\\TEXTURES\\CARD_FRAMES\\CUSTOM_FRAME.TDX", [11, 12]);
             AddBinaryPayload("ART_ASSETS\\FRONTEND\\CUSTOM_CHOICE.TDX", [13, 14]);
             AddBinaryPayload("ART_ASSETS\\TEXTURES\\EFFECTS\\CUSTOM_EFFECT_TEXTURE.TDX", [15, 16]);
+            AddBinaryPayload("ART_ASSETS\\TEXTURES\\EFFECTS\\UNUSED_EFFECT.TDX", [17, 18]);
 
-            // These must never be imported merely because the source workspace contains them.
+            // Foreign game content must never leak into the portable support WAD.
             AddPayload("DECKS\\FOREIGN_DECK.XML", "<DECK uid=\"999\" />");
             AddPayload("UNLOCKS\\FOREIGN_UNLOCK.XML", "<UNLOCK />");
             AddPayload("AI_PERSONALITIES\\FOREIGN_AI.XML", "<AI_PERSONALITY />");
@@ -143,6 +144,7 @@ internal static class PortableRuntimeChecks
 
             Equal(2, result.CardCount,
                 "CARD_V2 -> LOL function -> LOL constant -> MULTIVERSEID must pull HELPER_TOKEN CARD_V2.");
+            True(result.RuntimeResourceCount > 0, "Portable runtime resources were not recorded.");
             True(result.Warnings.Count == 0, $"Unexpected portable-runtime warning: {string.Join(" | ", result.Warnings)}");
 
             HashSet<string> paths = WadPaths(output);
@@ -157,6 +159,8 @@ internal static class PortableRuntimeChecks
             ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\ART_ASSETS\\FRONTEND\\CUSTOM_CHOICE.TDX");
             ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\ART_ASSETS\\TEXTURES\\EFFECTS\\CUSTOM_EFFECT_TEXTURE.TDX");
 
+            True(!paths.Any(path => path.Contains("UNUSED_EFFECT.TDX", StringComparison.OrdinalIgnoreCase)),
+                "Unreferenced heavy textures must not be copied just because they exist in the workspace.");
             True(!paths.Any(path => path.Contains("\\DECKS\\FOREIGN_DECK.XML", StringComparison.OrdinalIgnoreCase)),
                 "Portable card runtime must not import foreign decks.");
             True(!paths.Any(path => path.Contains("\\UNLOCKS\\FOREIGN_UNLOCK.XML", StringComparison.OrdinalIgnoreCase)),
