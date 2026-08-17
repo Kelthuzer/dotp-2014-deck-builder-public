@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 using DeckBuilder.GameData;
@@ -5,6 +6,13 @@ using Gibbed.Duels.FileFormats;
 
 internal static class PortableRuntimeChecks
 {
+    [ModuleInitializer]
+    internal static void Initialize()
+    {
+        Run();
+        Console.WriteLine("PASS: portable runtime dependency closure");
+    }
+
     public static void Run()
     {
         string root = Path.Combine(Path.GetTempPath(), $"dotp-portable-runtime-{Guid.NewGuid():N}");
@@ -154,8 +162,8 @@ internal static class PortableRuntimeChecks
                 "Portable runtime provenance count must be written.");
             True(provenance.Contains("runtimeResourceCounts", StringComparison.Ordinal),
                 "Portable runtime provenance breakdown must be written.");
-            True(provenance.Contains("88888", StringComparison.Ordinal),
-                "Runtime-discovered numeric card alias must be recorded in provenance through its resolved card closure.");
+            True(provenance.Contains("HELPER_TOKEN", StringComparison.Ordinal),
+                "Runtime-discovered MULTIVERSEID dependency must be recorded through its canonical card closure.");
         }
         finally
         {
