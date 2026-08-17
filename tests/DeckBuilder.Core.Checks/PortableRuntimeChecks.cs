@@ -29,6 +29,8 @@ internal static class PortableRuntimeChecks
 
             string AddPayload(string relativePath, string content)
             {
+                // Deliberately store every extracted resource as .bin. The portable resolver must
+                // classify text/binary payloads from ArchivePath, not from this storage filename.
                 string storageRelative = $"payload/{storageId++:D3}.bin";
                 string storage = Path.Combine(wadDirectory, storageRelative.Replace('/', Path.DirectorySeparatorChar));
                 Directory.CreateDirectory(Path.GetDirectoryName(storage)!);
@@ -79,9 +81,12 @@ internal static class PortableRuntimeChecks
 
             AddPayload("FUNCTIONS\\BRIDGE.LOL", """
                 function CARD_BRIDGE()
-                    local generated_card = 88888
+                    local generated_card = HELPER_CARD_ID
                     local effect_texture = CUSTOM_EFFECT_TEXTURE
                 end
+                """);
+            AddPayload("FUNCTIONS\\CONSTANTS.LOL", """
+                HELPER_CARD_ID = 88888
                 """);
             AddPayload("SPECS\\CREATURE_TYPES.TXT", "Angel=1\nConstruct=2\n");
             AddPayload("TEXT_PERMANENT\\CREATURE_TYPE_TEXT_TEST.XML", "<Workbook />");
@@ -136,13 +141,15 @@ internal static class PortableRuntimeChecks
                 .GetAwaiter()
                 .GetResult();
 
-            Equal(2, result.CardCount, "Runtime MULTIVERSEID reference must pull HELPER_TOKEN CARD_V2.");
+            Equal(2, result.CardCount,
+                "CARD_V2 -> LOL function -> LOL constant -> MULTIVERSEID must pull HELPER_TOKEN CARD_V2.");
             True(result.Warnings.Count == 0, $"Unexpected portable-runtime warning: {string.Join(" | ", result.Warnings)}");
 
             HashSet<string> paths = WadPaths(output);
             ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\CARDS\\ROOT_CARD.XML");
             ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\CARDS\\HELPER_TOKEN.XML");
             ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\FUNCTIONS\\BRIDGE.LOL");
+            ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\FUNCTIONS\\CONSTANTS.LOL");
             ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\SPECS\\CREATURE_TYPES.TXT");
             ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\TEXT_PERMANENT\\CREATURE_TYPE_TEXT_TEST.XML");
             ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\ART_ASSETS\\TEXTURES\\MANA\\CUSTOM_MANA.TDX");
