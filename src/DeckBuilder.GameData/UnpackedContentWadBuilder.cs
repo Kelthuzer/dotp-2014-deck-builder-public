@@ -264,10 +264,11 @@ public sealed class UnpackedContentWadBuilder
         string path = relativePath.Replace('/', '\\');
         if (kind == UnpackedContentKind.Cards)
         {
-            // Card support WADs may also carry the selected deck-box texture. This keeps the
-            // exported deck self-contained on a clean install while still excluding unrelated
-            // deck XML/unlocks/text resources.
+            // Card support WADs may also carry the selected deck-box texture and shared Lua/LOL
+            // runtime. Community WAD card XML frequently calls CW_*/RSN_* functions, so omitting
+            // FUNCTIONS can leave an otherwise present CARD_V2 with non-working mechanics.
             return StartsWithDirectory(path, "CARDS")
+                || StartsWithDirectory(path, "FUNCTIONS")
                 || StartsWithDirectory(path, "ART_ASSETS\\ILLUSTRATIONS")
                 || StartsWithDirectory(path, "ART_ASSETS\\TEXTURES\\CARDS")
                 || StartsWithDirectory(path, "ART_ASSETS\\TEXTURES\\DECKS");
