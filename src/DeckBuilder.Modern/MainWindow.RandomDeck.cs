@@ -191,10 +191,8 @@ public partial class MainWindow
 
         string colorCode = string.Concat("WUBRG".Where(selectedColors.Contains));
         if (colorCode.Length == 0)
-            colorCode = AppLocalization.IsRussian ? "бесцветная" : "colorless";
-        _projectName = AppLocalization.IsRussian
-            ? $"Случайная {colorCode} колода"
-            : $"Random {colorCode} deck";
+            colorCode = "colorless";
+        _projectName = $"Random {colorCode} deck";
         _deck.Name = _projectName;
 
         _assistantColors.Clear();
@@ -397,7 +395,6 @@ public partial class MainWindow
         int add = Math.Min(wantedCopies, Math.Min(maxByCard, Math.Min(maxByDeck, maxByColorless)));
         for (int index = 0; index < add; index++)
             target.Add(card);
-
         if (add > 0)
             copiesByCard[identity] = existing + add;
     }
