@@ -20,8 +20,10 @@ public static class PortableDeckCardReferencePlanner
         HashSet<string> references = new(StringComparer.OrdinalIgnoreCase);
         foreach (DeckEntry entry in deck.MainDeck.Concat(deck.RegularUnlocks).Concat(deck.PromoUnlocks))
         {
-            if (!string.IsNullOrWhiteSpace(entry.CardReference))
-                references.Add(entry.CardReference.Trim());
+            // DeckEntry.CardReference contains deck-XML modifiers such as # and @2. Dependency
+            // lookup must use the canonical CARD_V2 FILENAME, not that serialized deck syntax.
+            if (!string.IsNullOrWhiteSpace(entry.Card.FileName))
+                references.Add(entry.Card.FileName.Trim());
         }
 
         foreach (CardRecord land in SelectAutomaticLandPool(deck, catalog))
