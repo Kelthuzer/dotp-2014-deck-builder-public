@@ -16,13 +16,13 @@ internal sealed record WorkspaceSharedRuntimePackResult(
 /// <summary>
 /// Builds the portable, non-deck runtime that CARD_V2 definitions need when moved to another
 /// Magic 2014 installation. Some community cards are not self-contained XML: they call CW/RSN
-/// functions, read SPECS tables, resolve TEXT_PERMANENT ids, use custom mana/frame/UI textures,
-/// and may reach helper CARD_V2 definitions from the runtime itself.
+/// functions, read shared LOL constants, SPECS tables, TEXT_PERMANENT ids, use custom
+/// mana/frame/UI textures, and may reach helper CARD_V2 definitions from the runtime itself.
 ///
 /// The packager therefore has two layers:
 ///  1. copy the complete effective shared runtime trees that can be addressed dynamically;
-///  2. recursively follow concrete resource/card identifiers found in the selected CARD_V2 and
-///     in the particular runtime files those cards call.
+///  2. recursively follow concrete resource/card/function/constant identifiers found in selected
+///     CARD_V2 and in the runtime files those cards reach.
 ///
 /// Decks, unlocks and AI personalities are deliberately excluded from resource closure: importing
 /// them would change the recipient's game content rather than merely making the selected deck
@@ -64,8 +64,15 @@ internal static class WorkspaceSharedFunctionPackager
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static readonly Regex LuaFunctionRegex = new(
-        @"\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)|\b([A-Za-z_][A-Za-z0-9_]*)\s*=\s*function\b",
+        @"\bfunction\s+([A-Za-z_][A-Za-z0-9_.:]*)|\b([A-Za-z_][A-Za-z0-9_.:]*)\s*=\s*function\b",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    // Global constants/tables are as important as functions for CW/RSN portability. Excluding
+    // 'local' by anchoring the identifier directly after whitespace avoids indexing ordinary local
+    // temporaries, while symbols such as REGISTER_FOO, CW_SOMETHING or CW.Table still resolve.
+    private static readonly Regex LuaGlobalAssignmentRegex = new(
+        @"(?m)^\s*([A-Za-z_][A-Za-z0-9_.:]*)\s*=",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     public static WorkspaceSharedRuntimePackResult CopyIntoStaging(
         string? workspaceDirectory,
@@ -331,10 +338,12 @@ internal static class WorkspaceSharedFunctionPackager
                         string symbol = match.Groups[1].Success
                             ? match.Groups[1].Value
                             : match.Groups[2].Value;
-                        if (!string.IsNullOrWhiteSpace(symbol))
-                        {
-                            AddResourceAlias(aliases, symbol, resource);
-                        }
+                        AddSymbolAliases(aliases, symbol, resource);
+                    }
+
+                    foreach (Match match in LuaGlobalAssignmentRegex.Matches(text))
+                    {
+                        AddSymbolAliases(aliases, match.Groups[1].Value, resource);
                     }
                 }
                 catch
@@ -352,6 +361,22 @@ internal static class WorkspaceSharedFunctionPackager
                 .OrderBy(resource => resource.RelativePath, StringComparer.OrdinalIgnoreCase)
                 .ToArray(),
             StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static void AddSymbolAliases(
+        IDictionary<string, List<RuntimeCandidate>> aliases,
+        string symbol,
+        RuntimeCandidate resource)
+    {
+        if (string.IsNullOrWhiteSpace(symbol))
+            return;
+
+        AddResourceAlias(aliases, symbol, resource);
+        int separator = Math.Max(symbol.LastIndexOf('.'), symbol.LastIndexOf(':'));
+        if (separator >= 0 && separator < symbol.Length - 1)
+        {
+            AddResourceAlias(aliases, symbol[(separator + 1)..], resource);
+        }
     }
 
     private static bool TryResolveResource(
