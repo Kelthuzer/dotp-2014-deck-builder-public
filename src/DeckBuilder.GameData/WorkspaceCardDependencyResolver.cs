@@ -85,7 +85,12 @@ internal static class WorkspaceCardDependencyResolver
             missingTokens.OrderBy(value => value, StringComparer.OrdinalIgnoreCase).ToArray());
     }
 
-    private static bool TryResolveReferenceAlias(
+    /// <summary>
+    /// Resolves the logical identifiers used by CARD_V2 and shared CW/RSN runtime files to the
+    /// canonical CARD_V2 reference selected from the extracted workspace. Kept here so card XML
+    /// scanning and runtime-resource scanning cannot diverge in their alias rules.
+    /// </summary>
+    internal static bool TryResolveReferenceAlias(
         string candidate,
         IReadOnlyDictionary<string, string> referenceAliases,
         out string canonicalReference)
