@@ -264,11 +264,13 @@ public sealed class UnpackedContentWadBuilder
         string path = relativePath.Replace('/', '\\');
         if (kind == UnpackedContentKind.Cards)
         {
-            // Card support WADs may also carry the selected deck-box texture and shared Lua/LOL
-            // runtime. Community WAD card XML frequently calls CW_*/RSN_* functions, so omitting
-            // FUNCTIONS can leave an otherwise present CARD_V2 with non-working mechanics.
+            // Card support WADs may also carry the selected deck-box texture and the shared runtime
+            // needed by community mechanics. Choose-a-creature-type, for example, coordinates LOL
+            // functions with SPECS/CREATURE_TYPES.TXT and TEXT_PERMANENT labels/query strings.
             return StartsWithDirectory(path, "CARDS")
                 || StartsWithDirectory(path, "FUNCTIONS")
+                || StartsWithDirectory(path, "SPECS")
+                || StartsWithDirectory(path, "TEXT_PERMANENT")
                 || StartsWithDirectory(path, "ART_ASSETS\\ILLUSTRATIONS")
                 || StartsWithDirectory(path, "ART_ASSETS\\TEXTURES\\CARDS")
                 || StartsWithDirectory(path, "ART_ASSETS\\TEXTURES\\DECKS");
