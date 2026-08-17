@@ -264,16 +264,18 @@ public sealed class UnpackedContentWadBuilder
         string path = relativePath.Replace('/', '\\');
         if (kind == UnpackedContentKind.Cards)
         {
-            // Card support WADs may also carry the selected deck-box texture and the shared runtime
-            // needed by community mechanics. Choose-a-creature-type, for example, coordinates LOL
-            // functions with SPECS/CREATURE_TYPES.TXT and TEXT_PERMANENT labels/query strings.
+            // A portable card support WAD can carry the complete card runtime namespace used by
+            // the mature DotP loader: executable LOL functions, subtype/spec tables, permanent text,
+            // illustrations, card frames, mana symbols and other card/UI textures. The selected
+            // workspace packager decides which concrete ART_ASSETS files are staged, so accepting
+            // the complete ART_ASSETS namespaces here does not itself copy unrelated game content.
             return StartsWithDirectory(path, "CARDS")
                 || StartsWithDirectory(path, "FUNCTIONS")
                 || StartsWithDirectory(path, "SPECS")
                 || StartsWithDirectory(path, "TEXT_PERMANENT")
                 || StartsWithDirectory(path, "ART_ASSETS\\ILLUSTRATIONS")
-                || StartsWithDirectory(path, "ART_ASSETS\\TEXTURES\\CARDS")
-                || StartsWithDirectory(path, "ART_ASSETS\\TEXTURES\\DECKS");
+                || StartsWithDirectory(path, "ART_ASSETS\\TEXTURES")
+                || StartsWithDirectory(path, "ART_ASSETS\\FRONTEND");
         }
 
         return StartsWithDirectory(path, "DECKS")
