@@ -1,12 +1,21 @@
 namespace DeckBuilder.GameData;
 
 /// <summary>
-/// Copies the effective DATA_ALL_PLATFORMS/FUNCTIONS payload from an extracted workspace into a
-/// support-WAD staging tree. Community WAD cards frequently delegate mechanics to CW_*/RSN_* LOL
-/// functions; packaging the CARD_V2 alone is therefore not sufficient for a portable deck.
+/// Copies the effective shared card runtime from an extracted workspace into a support-WAD staging
+/// tree. Community WAD cards frequently depend on three coordinated resource groups:
+/// FUNCTIONS for CW_*/RSN_* LOL helpers, SPECS for subtype/index tables such as CREATURE_TYPES.TXT,
+/// and TEXT_PERMANENT for the labels/query text consumed by those helpers. Packaging CARD_V2 alone
+/// is therefore not sufficient for a portable deck.
 /// </summary>
 internal static class WorkspaceSharedFunctionPackager
 {
+    private static readonly string[] RuntimeDirectories =
+    {
+        "FUNCTIONS",
+        "SPECS",
+        "TEXT_PERMANENT"
+    };
+
     public static int CopyIntoStaging(
         string? workspaceDirectory,
         string stagingDirectory,
@@ -33,7 +42,7 @@ internal static class WorkspaceSharedFunctionPackager
         }
 
         GameVersionPackageService packageService = new();
-        List<FunctionCandidate> candidates = new();
+        List<RuntimeCandidate> candidates = new();
 
         foreach (string manifestPath in manifestPaths)
         {
@@ -49,7 +58,7 @@ internal static class WorkspaceSharedFunctionPackager
                 AddWarning(
                     warnings,
                     warningKeys,
-                    $"Could not inspect shared FUNCTIONS in {packageDirectory}: {exception.Message}");
+                    $"Could not inspect shared card runtime in {packageDirectory}: {exception.Message}");
                 continue;
             }
 
@@ -60,8 +69,7 @@ internal static class WorkspaceSharedFunctionPackager
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     string? relative = AllPlatformsRelative(file.ArchivePath);
-                    if (relative is null
-                        || !StartsWithDirectory(relative, "FUNCTIONS"))
+                    if (relative is null || !IsSharedRuntimePath(relative))
                     {
                         continue;
                     }
@@ -74,11 +82,11 @@ internal static class WorkspaceSharedFunctionPackager
                         AddWarning(
                             warnings,
                             warningKeys,
-                            $"Shared function payload {relative} from {manifest.VersionName} / {wad.Name} is missing from the extracted workspace.");
+                            $"Shared runtime payload {relative} from {manifest.VersionName} / {wad.Name} is missing from the extracted workspace.");
                         continue;
                     }
 
-                    candidates.Add(new FunctionCandidate(
+                    candidates.Add(new RuntimeCandidate(
                         relative,
                         manifest.VersionName,
                         wad.Name,
@@ -93,10 +101,10 @@ internal static class WorkspaceSharedFunctionPackager
             return 0;
         }
 
-        // Match the rest of the workspace merger: later WAD order/name/package wins. Copy the
-        // complete effective FUNCTIONS tree instead of trying to parse Lua-to-Lua dependencies;
-        // CW_TOKENS.LOL, for example, relies on shared tables/constants maintained in other LOLs.
-        FunctionCandidate[] selected = candidates
+        // Match the workspace merger: later WAD order/name/package wins. Copy the complete
+        // effective runtime instead of attempting to infer transitive dependencies. In particular,
+        // choose-a-creature-type helpers require coordinated FUNCTIONS + SPECS + TEXT_PERMANENT.
+        RuntimeCandidate[] selected = candidates
             .GroupBy(item => item.RelativePath, StringComparer.OrdinalIgnoreCase)
             .Select(group => group
                 .OrderBy(item => item.WadOrder)
@@ -106,23 +114,26 @@ internal static class WorkspaceSharedFunctionPackager
             .OrderBy(item => item.RelativePath, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        foreach (FunctionCandidate function in selected)
+        foreach (RuntimeCandidate resource in selected)
         {
             cancellationToken.ThrowIfCancellationRequested();
             string target = Path.Combine(
                 stagingDirectory,
                 "DATA_ALL_PLATFORMS",
-                function.RelativePath.Replace('\\', Path.DirectorySeparatorChar));
+                resource.RelativePath.Replace('\\', Path.DirectorySeparatorChar));
             string? targetDirectory = Path.GetDirectoryName(target);
             if (!string.IsNullOrWhiteSpace(targetDirectory))
             {
                 Directory.CreateDirectory(targetDirectory);
             }
-            File.Copy(function.StoragePath, target, overwrite: true);
+            File.Copy(resource.StoragePath, target, overwrite: true);
         }
 
         return selected.Length;
     }
+
+    private static bool IsSharedRuntimePath(string relativePath) =>
+        RuntimeDirectories.Any(directory => StartsWithDirectory(relativePath, directory));
 
     private static string? AllPlatformsRelative(string archivePath)
     {
@@ -154,7 +165,7 @@ internal static class WorkspaceSharedFunctionPackager
         }
     }
 
-    private sealed record FunctionCandidate(
+    private sealed record RuntimeCandidate(
         string RelativePath,
         string PackageName,
         string WadName,
