@@ -12,6 +12,7 @@ namespace DeckBuilder.GameData;
 public enum UnpackedContentKind
 {
     Cards,
+    PortableCards,
     Decks
 }
 
@@ -172,8 +173,6 @@ public sealed class UnpackedContentWadBuilder
         Dictionary<string, SourcePayload> content = new(StringComparer.OrdinalIgnoreCase);
         int overrides = 0;
 
-        // Game priority: greater WAD_HEADER order wins; at equal order the WAD that sorts
-        // later by name loads later. Iterate low -> high and overwrite the effective entry.
         foreach (DotpWadPackageManifest wad in manifest.Wads
                      .OrderBy(wad => wad.PrimaryOrder)
                      .ThenBy(wad => wad.Name, StringComparer.OrdinalIgnoreCase))
@@ -232,7 +231,8 @@ public sealed class UnpackedContentWadBuilder
         }
 
         string sourceName = Path.GetFileName(sourceRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-        if (kind == UnpackedContentKind.Cards && sourceName.Equals("CARDS", StringComparison.OrdinalIgnoreCase))
+        if ((kind == UnpackedContentKind.Cards || kind == UnpackedContentKind.PortableCards)
+            && sourceName.Equals("CARDS", StringComparison.OrdinalIgnoreCase))
         {
             return $"CARDS\\{relative}";
         }
@@ -262,13 +262,18 @@ public sealed class UnpackedContentWadBuilder
     private static bool MatchesKind(string relativePath, UnpackedContentKind kind)
     {
         string path = relativePath.Replace('/', '\\');
+        if (kind == UnpackedContentKind.PortableCards)
+        {
+            // PortableCards is only used for the curated temporary tree produced by
+            // WorkspaceSelectedCardsBuilder. Accept every dependency namespace that resolver staged,
+            // but never let a portable support WAD absorb foreign deck/unlock/AI definitions.
+            return !StartsWithDirectory(path, "DECKS")
+                && !StartsWithDirectory(path, "UNLOCKS")
+                && !StartsWithDirectory(path, "AI_PERSONALITIES");
+        }
+
         if (kind == UnpackedContentKind.Cards)
         {
-            // A portable card support WAD can carry the complete card runtime namespace used by
-            // the mature DotP loader: executable LOL functions, subtype/spec tables, permanent text,
-            // illustrations, card frames, mana symbols and other card/UI textures. The selected
-            // workspace packager decides which concrete ART_ASSETS files are staged, so accepting
-            // the complete ART_ASSETS namespaces here does not itself copy unrelated game content.
             return StartsWithDirectory(path, "CARDS")
                 || StartsWithDirectory(path, "FUNCTIONS")
                 || StartsWithDirectory(path, "SPECS")
