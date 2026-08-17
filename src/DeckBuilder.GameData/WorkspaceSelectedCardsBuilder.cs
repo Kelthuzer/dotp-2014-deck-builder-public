@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Xml.Linq;
 
 namespace DeckBuilder.GameData;
 
@@ -19,22 +18,20 @@ public sealed record WorkspaceSelectedCardsBuildResult(
     string SourcesPath,
     int CardCount,
     int ArtCount,
+    int RuntimeResourceCount,
     UnpackedContentBuildResult BuildResult,
     IReadOnlyList<string> Warnings);
 
 /// <summary>
-/// Creates a portable support WAD for the selected deck. The closure contains the selected
-/// CARD_V2 definitions, recursively referenced cards/tokens and illustrations, plus the effective
-/// CW/RSN runtime and concrete non-card resources reached by those definitions. Card and runtime
-/// dependency discovery iterate to a fixpoint because a shared function can itself name a helper
-/// CARD_V2 whose XML then introduces another runtime/resource dependency.
+/// Builds the support WAD that makes a deck portable: selected CARD_V2 files, recursive card/token
+/// dependencies, their illustrations, and the shared runtime/resources reached by those cards.
 /// </summary>
 public sealed class WorkspaceSelectedCardsBuilder
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
     private readonly UnpackedContentWadBuilder _wadBuilder = new();
 
-    public async Task<WorkspaceSelectedCardsBuildResult> BuildAsync(
+    public Task<WorkspaceSelectedCardsBuildResult> BuildAsync(
         string outputPath,
         IEnumerable<string> references,
         WorkspaceContentVariantScanResult scan,
@@ -42,6 +39,7 @@ public sealed class WorkspaceSelectedCardsBuilder
         string? workspaceDirectory = null,
         string? deckBoxImageId = null,
         string? deckBoxTexturePath = null,
+        IEnumerable<string>? runtimeRootIdentifiers = null,
         int order = 50,
         CancellationToken cancellationToken = default)
     {
@@ -49,20 +47,61 @@ public sealed class WorkspaceSelectedCardsBuilder
         ArgumentNullException.ThrowIfNull(references);
         ArgumentNullException.ThrowIfNull(scan);
 
-        string[] rootReferences = references
-            .Where(value => !string.IsNullOrWhiteSpace(value))
-            .Select(value => value.Trim())
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        // The old implementation did workspace indexing and dependency expansion on the WPF UI
+        // thread. Keep the whole operation on one worker so large community workspaces stay usable.
+        return Task.Run(
+            () => Build(
+                outputPath,
+                references,
+                scan,
+                selections,
+                workspaceDirectory,
+                deckBoxImageId,
+                deckBoxTexturePath,
+                runtimeRootIdentifiers,
+                order,
+                cancellationToken),
+            cancellationToken);
+    }
 
-        HashSet<string> rootReferenceSet = rootReferences.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        IReadOnlyDictionary<string, string> referenceAliases = BuildReferenceAliases(scan.CardVariants);
+    private WorkspaceSelectedCardsBuildResult Build(
+        string outputPath,
+        IEnumerable<string> references,
+        WorkspaceContentVariantScanResult scan,
+        IReadOnlyDictionary<string, string>? selections,
+        string? workspaceDirectory,
+        string? deckBoxImageId,
+        string? deckBoxTexturePath,
+        IEnumerable<string>? runtimeRootIdentifiers,
+        int order,
+        CancellationToken cancellationToken)
+    {
+        string[] rootReferences = NormalizeReferences(references);
+        if (rootReferences.Length == 0)
+            throw new InvalidDataException("No CARD_V2 references were supplied for portable packaging.");
 
         string output = Path.GetFullPath(outputPath);
         string outputDirectory = Path.GetDirectoryName(output)
             ?? throw new DirectoryNotFoundException("The support WAD output directory is missing.");
         Directory.CreateDirectory(outputDirectory);
+
+        WorkspaceCardIndex cardIndex = WorkspaceCardIndex.Create(scan);
+        HashSet<string> rootReferenceSet = rootReferences.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        List<string> warnings = new();
+        HashSet<string> warningKeys = new(StringComparer.OrdinalIgnoreCase);
+        WorkspacePortableRuntimeIndex runtimeIndex = WorkspacePortableRuntimeIndex.Load(
+            workspaceDirectory,
+            warnings,
+            warningKeys,
+            cancellationToken);
+
+        string? requiredDeckTexture = BuildDeckTextureResourcePath(deckBoxImageId, deckBoxTexturePath);
+        string[] runtimeRoots = (runtimeRootIdentifiers ?? Array.Empty<string>())
+            .Append(requiredDeckTexture)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
 
         string staging = Path.Combine(outputDirectory, $".workspace-cards-{Guid.NewGuid():N}");
         Directory.CreateDirectory(staging);
@@ -74,159 +113,117 @@ public sealed class WorkspaceSelectedCardsBuilder
             Directory.CreateDirectory(artDirectory);
 
             List<WorkspaceSelectedCardSource> sources = new();
-            List<string> warnings = new();
-            HashSet<string> warningKeys = new(StringComparer.OrdinalIgnoreCase);
+            List<string> cardXmlPaths = new();
             HashSet<string> copiedArt = new(StringComparer.OrdinalIgnoreCase);
             HashSet<string> scheduledReferences = new(StringComparer.OrdinalIgnoreCase);
-            Queue<(string Reference, string? Parent)> pending = new();
+            Queue<CardRequest> pendingCards = new();
+
+            void QueueCard(string reference, string? requestedBy)
+            {
+                if (string.IsNullOrWhiteSpace(reference))
+                    return;
+
+                string normalized = reference.Trim();
+                if (scheduledReferences.Add(normalized))
+                    pendingCards.Enqueue(new CardRequest(normalized, requestedBy));
+            }
 
             foreach (string reference in rootReferences)
+                QueueCard(reference, null);
+
+            WorkspacePortableRuntimeResolution runtime = WorkspacePortableRuntimeResolution.Empty;
+            while (true)
             {
-                if (scheduledReferences.Add(reference))
-                    pending.Enqueue((reference, null));
-            }
-
-            WorkspaceSharedRuntimePackResult runtime = WorkspaceSharedRuntimePackResult.Empty;
-            bool runtimeNeedsRefresh = true;
-
-            while (pending.Count > 0 || runtimeNeedsRefresh)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                if (pending.Count == 0)
+                while (pendingCards.TryDequeue(out CardRequest? request))
                 {
-                    runtime = WorkspaceSharedFunctionPackager.CopyIntoStaging(
-                        workspaceDirectory,
-                        staging,
-                        referenceAliases,
-                        warnings,
-                        warningKeys,
-                        cancellationToken);
-                    runtimeNeedsRefresh = false;
-
-                    foreach (string dependency in runtime.CardReferences)
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!cardIndex.TryResolve(request.Reference, selections, out WorkspaceContentVariant selected))
                     {
-                        if (scheduledReferences.Add(dependency))
-                            pending.Enqueue((dependency, "portable shared runtime"));
+                        Warn(
+                            warnings,
+                            warningKeys,
+                            request.RequestedBy is null
+                                ? $"No extracted CARD_V2 definition was found for {request.Reference}; the deck keeps the exact reference."
+                                : $"Referenced CARD_V2 dependency {request.Reference} required by {request.RequestedBy} was not found in the workspace.");
+                        continue;
                     }
 
-                    continue;
+                    string canonicalReference = string.IsNullOrWhiteSpace(selected.Reference)
+                        ? request.Reference
+                        : selected.Reference.Trim();
+                    string extension = Path.GetExtension(selected.RelativePath);
+                    string cardFileName = SanitizeFileName(canonicalReference)
+                        + (string.IsNullOrWhiteSpace(extension) ? ".XML" : extension);
+                    File.Copy(selected.StoragePath, Path.Combine(cardDirectory, cardFileName), overwrite: true);
+                    cardXmlPaths.Add(selected.StoragePath);
+
+                    CopyIllustration(selected, artDirectory, copiedArt);
+                    sources.Add(ToSource(canonicalReference, selected));
+
+                    string rawXml;
+                    try
+                    {
+                        rawXml = File.ReadAllText(selected.StoragePath);
+                    }
+                    catch (Exception exception)
+                    {
+                        Warn(
+                            warnings,
+                            warningKeys,
+                            $"Could not inspect CARD_V2 dependencies for {canonicalReference}: {exception.Message}");
+                        continue;
+                    }
+
+                    WorkspaceCardDependencyScanResult dependencyScan = WorkspaceCardDependencyResolver.Scan(
+                        rawXml,
+                        cardIndex.Aliases,
+                        canonicalReference);
+                    foreach (string missingToken in dependencyScan.MissingTokenReferences)
+                    {
+                        Warn(
+                            warnings,
+                            warningKeys,
+                            $"Token dependency {missingToken} referenced by {canonicalReference} was not found in the workspace.");
+                    }
+
+                    foreach (string dependency in dependencyScan.References)
+                        QueueCard(dependency, canonicalReference);
                 }
 
-                (string reference, string? parent) = pending.Dequeue();
-                WorkspaceContentVariant[] variants = scan.CardVariants
-                    .Where(item => item.Reference.Equals(reference, StringComparison.OrdinalIgnoreCase))
-                    .ToArray();
-                if (variants.Length == 0)
-                {
-                    string warning = parent is null
-                        ? $"No extracted CARD_V2 definition was found for {reference}; the deck will still keep the exact reference."
-                        : $"Referenced CARD_V2 dependency {reference} required by {parent} was not found in the extracted workspace.";
-                    if (warningKeys.Add(warning))
-                        warnings.Add(warning);
-                    continue;
-                }
+                // Runtime can name another CARD_V2 by FILENAME/ARTID/MULTIVERSEID. Re-resolve only
+                // after the current card queue is exhausted; the expensive workspace index itself
+                // was already built once above.
+                runtime = runtimeIndex.Resolve(
+                    cardXmlPaths,
+                    runtimeRoots,
+                    cardIndex.Aliases,
+                    warnings,
+                    warningKeys,
+                    cancellationToken);
 
-                WorkspaceContentVariant selected = ResolveVariant(reference, variants, scan.Conflicts, selections);
-                string canonicalReference = string.IsNullOrWhiteSpace(selected.Reference)
-                    ? reference
-                    : selected.Reference.Trim();
-                string extension = Path.GetExtension(selected.RelativePath);
-                string cardFileName = SanitizeFileName(canonicalReference) + (string.IsNullOrWhiteSpace(extension) ? ".XML" : extension);
-                string targetCard = Path.Combine(cardDirectory, cardFileName);
-                File.Copy(selected.StoragePath, targetCard, overwrite: true);
-                runtimeNeedsRefresh = true;
-
-                if (!string.IsNullOrWhiteSpace(selected.ArtStoragePath)
-                    && File.Exists(selected.ArtStoragePath)
-                    && !string.IsNullOrWhiteSpace(selected.ArtId))
-                {
-                    string artFileName = SanitizeFileName(selected.ArtId) + ".TDX";
-                    if (copiedArt.Add(artFileName))
-                        File.Copy(selected.ArtStoragePath, Path.Combine(artDirectory, artFileName), overwrite: true);
-                }
-
-                sources.Add(new WorkspaceSelectedCardSource(
-                    canonicalReference,
-                    selected.PackageName,
-                    selected.WadName,
-                    selected.WadOrder,
-                    selected.StoragePath,
-                    selected.Sha256,
-                    string.IsNullOrWhiteSpace(selected.ArtId) ? null : selected.ArtId,
-                    selected.ArtStoragePath,
-                    selected.ArtSha256));
-
-                string rawXml;
-                try
-                {
-                    rawXml = File.ReadAllText(selected.StoragePath);
-                }
-                catch (Exception exception)
-                {
-                    string warning = $"Could not inspect CARD_V2 dependencies for {canonicalReference}: {exception.Message}";
-                    if (warningKeys.Add(warning))
-                        warnings.Add(warning);
-                    continue;
-                }
-
-                WorkspaceCardDependencyScanResult dependencyScan = WorkspaceCardDependencyResolver.Scan(
-                    rawXml,
-                    referenceAliases,
-                    canonicalReference);
-
-                foreach (string missingToken in dependencyScan.MissingTokenReferences)
-                {
-                    string warning = $"Token dependency {missingToken} referenced by {canonicalReference} was not found in the extracted workspace.";
-                    if (warningKeys.Add(warning))
-                        warnings.Add(warning);
-                }
-
-                foreach (string dependency in dependencyScan.References)
+                bool addedRuntimeCard = false;
+                foreach (string dependency in runtime.CardReferences)
                 {
                     if (scheduledReferences.Add(dependency))
-                        pending.Enqueue((dependency, canonicalReference));
+                    {
+                        pendingCards.Enqueue(new CardRequest(dependency, "portable runtime"));
+                        addedRuntimeCard = true;
+                    }
                 }
+
+                if (!addedRuntimeCard)
+                    break;
             }
+
+            ValidateRequiredRuntimeRoots(requiredDeckTexture, runtime, warnings, warningKeys);
+            runtimeIndex.CopyIntoStaging(staging, runtime, cancellationToken);
+            StageCustomDeckTexture(staging, deckBoxImageId, deckBoxTexturePath);
 
             int packagedRootCards = sources.Count(source => rootReferenceSet.Contains(source.Reference));
             if (packagedRootCards == 0)
-                throw new InvalidDataException("None of the deck's cards have extracted definitions that can be packaged.");
+                throw new InvalidDataException("None of the deck's CARD_V2 definitions could be packaged.");
 
-            if (!string.IsNullOrWhiteSpace(deckBoxImageId))
-            {
-                string deckTexture;
-                if (!string.IsNullOrWhiteSpace(deckBoxTexturePath))
-                {
-                    deckTexture = Path.GetFullPath(deckBoxTexturePath);
-                    if (!File.Exists(deckTexture))
-                        throw new FileNotFoundException("The generated custom deck-cover TDX was not found.", deckTexture);
-                }
-                else
-                {
-                    if (string.IsNullOrWhiteSpace(workspaceDirectory) || !Directory.Exists(workspaceDirectory))
-                        throw new DirectoryNotFoundException(
-                            $"Cannot package deck cover '{deckBoxImageId}' because the extracted workspace is unavailable.");
-
-                    deckTexture = FindDeckTexture(workspaceDirectory, deckBoxImageId)
-                        ?? throw new FileNotFoundException(
-                            $"Deck cover '{deckBoxImageId}' was selected, but its TDX was not found under ART_ASSETS\\TEXTURES in the extracted workspace.");
-                }
-
-                string deckTextureDirectory = Path.Combine(
-                    staging,
-                    "DATA_ALL_PLATFORMS",
-                    "ART_ASSETS",
-                    "TEXTURES",
-                    "DECKS");
-                Directory.CreateDirectory(deckTextureDirectory);
-                File.Copy(
-                    deckTexture,
-                    Path.Combine(deckTextureDirectory, SanitizeFileName(deckBoxImageId) + ".TDX"),
-                    overwrite: true);
-            }
-
-            UnpackedContentBuildResult result = await _wadBuilder.BuildAsync(
+            UnpackedContentBuildResult wadResult = _wadBuilder.Build(
                 new UnpackedContentBuildOptions(
                     staging,
                     output,
@@ -237,11 +234,10 @@ public sealed class WorkspaceSelectedCardsBuilder
             int sharedFunctionCount = runtime.ResourceCounts.TryGetValue("FUNCTIONS", out int functionCount)
                 ? functionCount
                 : 0;
-
             string sourcesPath = output + ".sources.json";
             File.WriteAllText(sourcesPath, JsonSerializer.Serialize(new
             {
-                formatVersion = 2,
+                formatVersion = 3,
                 createdUtc = DateTime.UtcNow,
                 wad = output,
                 order,
@@ -250,9 +246,11 @@ public sealed class WorkspaceSelectedCardsBuilder
                 rootCards = rootReferences,
                 dependencyCardCount = Math.Max(0, sources.Count - packagedRootCards),
                 sharedFunctionCount,
+                runtimeRootIdentifiers = runtimeRoots,
                 runtimeResourceCount = runtime.ResourceCount,
                 runtimeResourceCounts = runtime.ResourceCounts,
                 runtimeCardReferences = runtime.CardReferences,
+                missingRuntimeRootIdentifiers = runtime.MissingRootIdentifiers,
                 cards = sources
             }, JsonOptions));
 
@@ -261,7 +259,8 @@ public sealed class WorkspaceSelectedCardsBuilder
                 sourcesPath,
                 sources.Count,
                 copiedArt.Count,
-                result,
+                runtime.ResourceCount,
+                wadResult,
                 warnings);
         }
         finally
@@ -271,140 +270,103 @@ public sealed class WorkspaceSelectedCardsBuilder
         }
     }
 
-    private static IReadOnlyDictionary<string, string> BuildReferenceAliases(
-        IReadOnlyList<WorkspaceContentVariant> variants)
+    private static string[] NormalizeReferences(IEnumerable<string> references) =>
+        references
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+    private static WorkspaceSelectedCardSource ToSource(
+        string canonicalReference,
+        WorkspaceContentVariant selected) => new(
+        canonicalReference,
+        selected.PackageName,
+        selected.WadName,
+        selected.WadOrder,
+        selected.StoragePath,
+        selected.Sha256,
+        string.IsNullOrWhiteSpace(selected.ArtId) ? null : selected.ArtId,
+        selected.ArtStoragePath,
+        selected.ArtSha256);
+
+    private static void CopyIllustration(
+        WorkspaceContentVariant selected,
+        string artDirectory,
+        ISet<string> copiedArt)
     {
-        Dictionary<string, HashSet<string>> candidates = new(StringComparer.OrdinalIgnoreCase);
-
-        foreach (WorkspaceContentVariant variant in variants)
+        if (string.IsNullOrWhiteSpace(selected.ArtStoragePath)
+            || !File.Exists(selected.ArtStoragePath)
+            || string.IsNullOrWhiteSpace(selected.ArtId))
         {
-            if (string.IsNullOrWhiteSpace(variant.Reference))
-                continue;
-
-            string canonicalReference = variant.Reference.Trim();
-            AddAlias(candidates, canonicalReference, canonicalReference);
-
-            string sourceFileName = Path.GetFileNameWithoutExtension(variant.RelativePath);
-            if (!string.IsNullOrWhiteSpace(sourceFileName))
-                AddAlias(candidates, sourceFileName, canonicalReference);
-
-            if (!string.IsNullOrWhiteSpace(variant.ArtId))
-                AddAlias(candidates, variant.ArtId.Trim(), canonicalReference);
-
-            foreach (string alias in ReadCardIdentityAliases(variant.StoragePath))
-                AddAlias(candidates, alias, canonicalReference);
-        }
-
-        return candidates
-            .Where(pair => pair.Value.Count == 1)
-            .ToDictionary(
-                pair => pair.Key,
-                pair => pair.Value.Single(),
-                StringComparer.OrdinalIgnoreCase);
-    }
-
-    private static IReadOnlyList<string> ReadCardIdentityAliases(string storagePath)
-    {
-        try
-        {
-            XDocument document = XDocument.Parse(File.ReadAllText(storagePath));
-            XElement? card = document.Root?.DescendantsAndSelf()
-                .FirstOrDefault(element => element.Name.LocalName.Equals("CARD_V2", StringComparison.OrdinalIgnoreCase));
-            if (card is null)
-                return Array.Empty<string>();
-
-            List<string> aliases = new();
-            foreach (string elementName in new[] { "FILENAME", "ARTID", "MULTIVERSEID" })
-            {
-                XElement? element = card.Elements()
-                    .FirstOrDefault(child => child.Name.LocalName.Equals(elementName, StringComparison.OrdinalIgnoreCase));
-                if (element is null)
-                    continue;
-
-                string value = element.Attributes()
-                    .FirstOrDefault(attribute =>
-                        attribute.Name.LocalName.Equals("text", StringComparison.OrdinalIgnoreCase)
-                        || attribute.Name.LocalName.Equals("value", StringComparison.OrdinalIgnoreCase))
-                    ?.Value.Trim() ?? element.Value.Trim();
-                if (!string.IsNullOrWhiteSpace(value))
-                    aliases.Add(value);
-            }
-
-            return aliases
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-        }
-        catch
-        {
-            return Array.Empty<string>();
-        }
-    }
-
-    private static void AddAlias(
-        IDictionary<string, HashSet<string>> aliases,
-        string alias,
-        string canonicalReference)
-    {
-        if (string.IsNullOrWhiteSpace(alias))
             return;
-
-        if (!aliases.TryGetValue(alias, out HashSet<string>? references))
-        {
-            references = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            aliases[alias] = references;
         }
 
-        references.Add(canonicalReference);
+        string artFileName = SanitizeFileName(selected.ArtId) + ".TDX";
+        if (copiedArt.Add(artFileName))
+            File.Copy(selected.ArtStoragePath, Path.Combine(artDirectory, artFileName), overwrite: true);
     }
 
-    private static string? FindDeckTexture(string workspaceDirectory, string deckBoxImageId)
+    private static string? BuildDeckTextureResourcePath(string? deckBoxImageId, string? customTexturePath)
     {
-        string wanted = Path.GetFileNameWithoutExtension(deckBoxImageId.Trim());
-        string? textureFallback = null;
-        foreach (string path in Directory.EnumerateFiles(workspaceDirectory, "*.tdx", SearchOption.AllDirectories))
+        if (!string.IsNullOrWhiteSpace(customTexturePath) || string.IsNullOrWhiteSpace(deckBoxImageId))
+            return null;
+
+        string imageId = Path.GetFileNameWithoutExtension(deckBoxImageId.Trim());
+        return $"ART_ASSETS\\TEXTURES\\DECKS\\{imageId}.TDX";
+    }
+
+    private static void ValidateRequiredRuntimeRoots(
+        string? requiredDeckTexture,
+        WorkspacePortableRuntimeResolution runtime,
+        ICollection<string> warnings,
+        ISet<string> warningKeys)
+    {
+        foreach (string missing in runtime.MissingRootIdentifiers)
         {
-            if (!Path.GetFileNameWithoutExtension(path).Equals(wanted, StringComparison.OrdinalIgnoreCase))
-                continue;
-
-            string normalized = path.Replace('/', '\\');
-            if (normalized.Contains("\\ART_ASSETS\\TEXTURES\\DECKS\\", StringComparison.OrdinalIgnoreCase))
-                return path;
-
-            if (textureFallback is null
-                && normalized.Contains("\\ART_ASSETS\\TEXTURES\\", StringComparison.OrdinalIgnoreCase))
+            if (requiredDeckTexture is not null
+                && missing.Equals(requiredDeckTexture, StringComparison.OrdinalIgnoreCase))
             {
-                textureFallback = path;
+                throw new FileNotFoundException(
+                    $"Deck texture '{Path.GetFileNameWithoutExtension(requiredDeckTexture)}' was not found in the effective workspace runtime.");
             }
-        }
 
-        return textureFallback;
+            Warn(warnings, warningKeys, $"Requested portable runtime resource {missing} was not found in the workspace.");
+        }
     }
 
-    private static WorkspaceContentVariant ResolveVariant(
-        string reference,
-        IReadOnlyList<WorkspaceContentVariant> variants,
-        IReadOnlyList<WorkspaceContentVariantConflict> conflicts,
-        IReadOnlyDictionary<string, string>? selections)
+    private static void StageCustomDeckTexture(
+        string staging,
+        string? deckBoxImageId,
+        string? deckBoxTexturePath)
     {
-        WorkspaceContentVariantConflict? conflict = conflicts.FirstOrDefault(item =>
-            item.IsCardDefinition
-            && item.Variants.Any(variant => variant.Reference.Equals(reference, StringComparison.OrdinalIgnoreCase)));
-        if (conflict is not null
-            && selections is not null
-            && selections.TryGetValue(conflict.ConflictKey, out string? selectedKey))
-        {
-            WorkspaceContentVariant? selected = conflict.Variants.FirstOrDefault(item =>
-                item.SelectionKey.Equals(selectedKey, StringComparison.Ordinal));
-            if (selected is not null)
-                return selected;
-        }
+        if (string.IsNullOrWhiteSpace(deckBoxTexturePath))
+            return;
+        if (string.IsNullOrWhiteSpace(deckBoxImageId))
+            throw new InvalidDataException("A custom deck texture requires a deck-box image id.");
 
-        return variants
-            .OrderBy(item => item.IsRecommended ? 1 : 0)
-            .ThenBy(item => item.WadOrder)
-            .ThenBy(item => item.WadName, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(item => item.PackageName, StringComparer.OrdinalIgnoreCase)
-            .Last();
+        string texture = Path.GetFullPath(deckBoxTexturePath);
+        if (!File.Exists(texture))
+            throw new FileNotFoundException("The generated custom deck-cover TDX was not found.", texture);
+
+        string targetDirectory = Path.Combine(
+            staging,
+            "DATA_ALL_PLATFORMS",
+            "ART_ASSETS",
+            "TEXTURES",
+            "DECKS");
+        Directory.CreateDirectory(targetDirectory);
+        File.Copy(
+            texture,
+            Path.Combine(targetDirectory, SanitizeFileName(Path.GetFileNameWithoutExtension(deckBoxImageId)) + ".TDX"),
+            overwrite: true);
+    }
+
+    private static void Warn(ICollection<string> warnings, ISet<string> warningKeys, string message)
+    {
+        if (warningKeys.Add(message))
+            warnings.Add(message);
     }
 
     private static string SanitizeFileName(string value)
@@ -413,4 +375,6 @@ public sealed class WorkspaceSelectedCardsBuilder
         string safe = new(value.Select(character => invalid.Contains(character) ? '_' : character).ToArray());
         return string.IsNullOrWhiteSpace(safe) ? "CARD" : safe.Trim();
     }
+
+    private sealed record CardRequest(string Reference, string? RequestedBy);
 }
