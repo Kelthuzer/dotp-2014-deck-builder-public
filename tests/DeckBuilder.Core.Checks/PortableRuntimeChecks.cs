@@ -137,10 +137,17 @@ internal static class PortableRuntimeChecks
                 variants);
 
             string output = Path.Combine(root, "DATA_DLC_9000_TEST_Cards.wad");
-            WorkspaceSelectedCardsBuildResult result = new WorkspaceSelectedCardsBuilder()
-                .BuildAsync(output, ["ROOT_CARD"], scan, null, root)
-                .GetAwaiter()
-                .GetResult();
+            WorkspaceSelectedCardsBuildResult result = new WorkspaceSelectedCardsBuilder().Build(
+                output,
+                ["ROOT_CARD"],
+                scan,
+                selections: null,
+                workspaceDirectory: root,
+                deckBoxImageId: null,
+                deckBoxTexturePath: null,
+                runtimeRootIdentifiers: null,
+                order: 50,
+                cancellationToken: default);
 
             Equal(2, result.CardCount,
                 "CARD_V2 -> LOL function -> LOL constant -> MULTIVERSEID must pull HELPER_TOKEN CARD_V2.");
