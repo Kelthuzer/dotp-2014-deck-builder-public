@@ -89,9 +89,6 @@ public sealed class WorkspaceSelectedCardsBuilder
             WorkspaceSharedRuntimePackResult runtime = WorkspaceSharedRuntimePackResult.Empty;
             bool runtimeNeedsRefresh = true;
 
-            // CARD_V2 -> CARD_V2 and CARD_V2 -> runtime -> CARD_V2 form one dependency graph.
-            // Re-run runtime discovery whenever a newly found card has been staged; scheduledReferences
-            // guarantees that cycles terminate.
             while (pending.Count > 0 || runtimeNeedsRefresh)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -110,16 +107,13 @@ public sealed class WorkspaceSelectedCardsBuilder
                     foreach (string dependency in runtime.CardReferences)
                     {
                         if (scheduledReferences.Add(dependency))
-                        {
                             pending.Enqueue((dependency, "portable shared runtime"));
-                        }
                     }
 
                     continue;
                 }
 
                 (string reference, string? parent) = pending.Dequeue();
-
                 WorkspaceContentVariant[] variants = scan.CardVariants
                     .Where(item => item.Reference.Equals(reference, StringComparison.OrdinalIgnoreCase))
                     .ToArray();
@@ -149,9 +143,7 @@ public sealed class WorkspaceSelectedCardsBuilder
                 {
                     string artFileName = SanitizeFileName(selected.ArtId) + ".TDX";
                     if (copiedArt.Add(artFileName))
-                    {
                         File.Copy(selected.ArtStoragePath, Path.Combine(artDirectory, artFileName), overwrite: true);
-                    }
                 }
 
                 sources.Add(new WorkspaceSelectedCardSource(
@@ -199,9 +191,7 @@ public sealed class WorkspaceSelectedCardsBuilder
 
             int packagedRootCards = sources.Count(source => rootReferenceSet.Contains(source.Reference));
             if (packagedRootCards == 0)
-            {
                 throw new InvalidDataException("None of the deck's cards have extracted definitions that can be packaged.");
-            }
 
             if (!string.IsNullOrWhiteSpace(deckBoxImageId))
             {
@@ -215,10 +205,8 @@ public sealed class WorkspaceSelectedCardsBuilder
                 else
                 {
                     if (string.IsNullOrWhiteSpace(workspaceDirectory) || !Directory.Exists(workspaceDirectory))
-                    {
                         throw new DirectoryNotFoundException(
                             $"Cannot package deck cover '{deckBoxImageId}' because the extracted workspace is unavailable.");
-                    }
 
                     deckTexture = FindDeckTexture(workspaceDirectory, deckBoxImageId)
                         ?? throw new FileNotFoundException(
@@ -242,7 +230,7 @@ public sealed class WorkspaceSelectedCardsBuilder
                 new UnpackedContentBuildOptions(
                     staging,
                     output,
-                    UnpackedContentKind.Cards,
+                    UnpackedContentKind.PortableCards,
                     order),
                 cancellationToken);
 
@@ -279,9 +267,7 @@ public sealed class WorkspaceSelectedCardsBuilder
         finally
         {
             if (Directory.Exists(staging))
-            {
                 Directory.Delete(staging, recursive: true);
-            }
         }
     }
 
@@ -305,9 +291,6 @@ public sealed class WorkspaceSelectedCardsBuilder
             if (!string.IsNullOrWhiteSpace(variant.ArtId))
                 AddAlias(candidates, variant.ArtId.Trim(), canonicalReference);
 
-            // ARTID is not the only numeric identifier used by community mechanics. Some CARD_V2
-            // scripts refer to MULTIVERSEID directly, so read the raw identity fields and add every
-            // unambiguous alias to the same canonical reference.
             foreach (string alias in ReadCardIdentityAliases(variant.StoragePath))
                 AddAlias(candidates, alias, canonicalReference);
         }
@@ -353,8 +336,6 @@ public sealed class WorkspaceSelectedCardsBuilder
         }
         catch
         {
-            // The variant scanner already keeps malformed definitions diagnosable. Alias expansion
-            // is best-effort and must not make an otherwise packageable card fail export.
             return Array.Empty<string>();
         }
     }
@@ -415,9 +396,7 @@ public sealed class WorkspaceSelectedCardsBuilder
             WorkspaceContentVariant? selected = conflict.Variants.FirstOrDefault(item =>
                 item.SelectionKey.Equals(selectedKey, StringComparison.Ordinal));
             if (selected is not null)
-            {
                 return selected;
-            }
         }
 
         return variants
