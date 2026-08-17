@@ -24,8 +24,8 @@ public sealed record WorkspaceSelectedCardsBuildResult(
 /// <summary>
 /// Creates a small support WAD containing card definitions/art referenced by the deck being
 /// exported, including recursive CARD_V2 dependencies used by card mechanics (tokens, generated
-/// cards and other referenced card definitions). Variant decisions are supplied by the UI after
-/// the deck is already built.
+/// cards and other referenced card definitions) plus the shared FUNCTIONS runtime used by CW/RSN
+/// mechanics. Variant decisions are supplied by the UI after the deck is already built.
 /// </summary>
 public sealed class WorkspaceSelectedCardsBuilder
 {
@@ -171,6 +171,13 @@ public sealed class WorkspaceSelectedCardsBuilder
                 throw new InvalidDataException("None of the deck's cards have extracted definitions that can be packaged.");
             }
 
+            int sharedFunctionCount = WorkspaceSharedFunctionPackager.CopyIntoStaging(
+                workspaceDirectory,
+                staging,
+                warnings,
+                warningKeys,
+                cancellationToken);
+
             if (!string.IsNullOrWhiteSpace(deckBoxImageId))
             {
                 string deckTexture;
@@ -225,6 +232,7 @@ public sealed class WorkspaceSelectedCardsBuilder
                 customDeckBoxTexture = string.IsNullOrWhiteSpace(deckBoxTexturePath) ? null : Path.GetFullPath(deckBoxTexturePath),
                 rootCards = rootReferences,
                 dependencyCardCount = Math.Max(0, sources.Count - packagedRootCards),
+                sharedFunctionCount,
                 cards = sources
             }, JsonOptions));
 
