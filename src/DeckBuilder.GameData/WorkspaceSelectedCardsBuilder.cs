@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Xml.Linq;
 
 namespace DeckBuilder.GameData;
 
@@ -22,10 +23,11 @@ public sealed record WorkspaceSelectedCardsBuildResult(
     IReadOnlyList<string> Warnings);
 
 /// <summary>
-/// Creates a small support WAD containing card definitions/art referenced by the deck being
-/// exported, including recursive CARD_V2 dependencies used by card mechanics (tokens, generated
-/// cards and other referenced card definitions) plus the shared FUNCTIONS runtime used by CW/RSN
-/// mechanics. Variant decisions are supplied by the UI after the deck is already built.
+/// Creates a portable support WAD for the selected deck. The closure contains the selected
+/// CARD_V2 definitions, recursively referenced cards/tokens and illustrations, plus the effective
+/// CW/RSN runtime and concrete non-card resources reached by those definitions. Card and runtime
+/// dependency discovery iterate to a fixpoint because a shared function can itself name a helper
+/// CARD_V2 whose XML then introduces another runtime/resource dependency.
 /// </summary>
 public sealed class WorkspaceSelectedCardsBuilder
 {
@@ -84,9 +86,38 @@ public sealed class WorkspaceSelectedCardsBuilder
                     pending.Enqueue((reference, null));
             }
 
-            while (pending.Count > 0)
+            WorkspaceSharedRuntimePackResult runtime = WorkspaceSharedRuntimePackResult.Empty;
+            bool runtimeNeedsRefresh = true;
+
+            // CARD_V2 -> CARD_V2 and CARD_V2 -> runtime -> CARD_V2 form one dependency graph.
+            // Re-run runtime discovery whenever a newly found card has been staged; scheduledReferences
+            // guarantees that cycles terminate.
+            while (pending.Count > 0 || runtimeNeedsRefresh)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+
+                if (pending.Count == 0)
+                {
+                    runtime = WorkspaceSharedFunctionPackager.CopyIntoStaging(
+                        workspaceDirectory,
+                        staging,
+                        referenceAliases,
+                        warnings,
+                        warningKeys,
+                        cancellationToken);
+                    runtimeNeedsRefresh = false;
+
+                    foreach (string dependency in runtime.CardReferences)
+                    {
+                        if (scheduledReferences.Add(dependency))
+                        {
+                            pending.Enqueue((dependency, "portable shared runtime"));
+                        }
+                    }
+
+                    continue;
+                }
+
                 (string reference, string? parent) = pending.Dequeue();
 
                 WorkspaceContentVariant[] variants = scan.CardVariants
@@ -110,6 +141,7 @@ public sealed class WorkspaceSelectedCardsBuilder
                 string cardFileName = SanitizeFileName(canonicalReference) + (string.IsNullOrWhiteSpace(extension) ? ".XML" : extension);
                 string targetCard = Path.Combine(cardDirectory, cardFileName);
                 File.Copy(selected.StoragePath, targetCard, overwrite: true);
+                runtimeNeedsRefresh = true;
 
                 if (!string.IsNullOrWhiteSpace(selected.ArtStoragePath)
                     && File.Exists(selected.ArtStoragePath)
@@ -171,13 +203,6 @@ public sealed class WorkspaceSelectedCardsBuilder
                 throw new InvalidDataException("None of the deck's cards have extracted definitions that can be packaged.");
             }
 
-            int sharedFunctionCount = WorkspaceSharedFunctionPackager.CopyIntoStaging(
-                workspaceDirectory,
-                staging,
-                warnings,
-                warningKeys,
-                cancellationToken);
-
             if (!string.IsNullOrWhiteSpace(deckBoxImageId))
             {
                 string deckTexture;
@@ -221,10 +246,14 @@ public sealed class WorkspaceSelectedCardsBuilder
                     order),
                 cancellationToken);
 
+            int sharedFunctionCount = runtime.ResourceCounts.TryGetValue("FUNCTIONS", out int functionCount)
+                ? functionCount
+                : 0;
+
             string sourcesPath = output + ".sources.json";
             File.WriteAllText(sourcesPath, JsonSerializer.Serialize(new
             {
-                formatVersion = 1,
+                formatVersion = 2,
                 createdUtc = DateTime.UtcNow,
                 wad = output,
                 order,
@@ -233,6 +262,9 @@ public sealed class WorkspaceSelectedCardsBuilder
                 rootCards = rootReferences,
                 dependencyCardCount = Math.Max(0, sources.Count - packagedRootCards),
                 sharedFunctionCount,
+                runtimeResourceCount = runtime.ResourceCount,
+                runtimeResourceCounts = runtime.ResourceCounts,
+                runtimeCardReferences = runtime.CardReferences,
                 cards = sources
             }, JsonOptions));
 
@@ -272,6 +304,12 @@ public sealed class WorkspaceSelectedCardsBuilder
 
             if (!string.IsNullOrWhiteSpace(variant.ArtId))
                 AddAlias(candidates, variant.ArtId.Trim(), canonicalReference);
+
+            // ARTID is not the only numeric identifier used by community mechanics. Some CARD_V2
+            // scripts refer to MULTIVERSEID directly, so read the raw identity fields and add every
+            // unambiguous alias to the same canonical reference.
+            foreach (string alias in ReadCardIdentityAliases(variant.StoragePath))
+                AddAlias(candidates, alias, canonicalReference);
         }
 
         return candidates
@@ -280,6 +318,45 @@ public sealed class WorkspaceSelectedCardsBuilder
                 pair => pair.Key,
                 pair => pair.Value.Single(),
                 StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static IReadOnlyList<string> ReadCardIdentityAliases(string storagePath)
+    {
+        try
+        {
+            XDocument document = XDocument.Parse(File.ReadAllText(storagePath));
+            XElement? card = document.Root?.DescendantsAndSelf()
+                .FirstOrDefault(element => element.Name.LocalName.Equals("CARD_V2", StringComparison.OrdinalIgnoreCase));
+            if (card is null)
+                return Array.Empty<string>();
+
+            List<string> aliases = new();
+            foreach (string elementName in new[] { "FILENAME", "ARTID", "MULTIVERSEID" })
+            {
+                XElement? element = card.Elements()
+                    .FirstOrDefault(child => child.Name.LocalName.Equals(elementName, StringComparison.OrdinalIgnoreCase));
+                if (element is null)
+                    continue;
+
+                string value = element.Attributes()
+                    .FirstOrDefault(attribute =>
+                        attribute.Name.LocalName.Equals("text", StringComparison.OrdinalIgnoreCase)
+                        || attribute.Name.LocalName.Equals("value", StringComparison.OrdinalIgnoreCase))
+                    ?.Value.Trim() ?? element.Value.Trim();
+                if (!string.IsNullOrWhiteSpace(value))
+                    aliases.Add(value);
+            }
+
+            return aliases
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+        catch
+        {
+            // The variant scanner already keeps malformed definitions diagnosable. Alias expansion
+            // is best-effort and must not make an otherwise packageable card fail export.
+            return Array.Empty<string>();
+        }
     }
 
     private static void AddAlias(
