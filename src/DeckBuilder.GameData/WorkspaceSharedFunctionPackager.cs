@@ -37,6 +37,8 @@ internal static class WorkspaceSharedFunctionPackager
         "TEXT_PERMANENT",
         "ART_ASSETS\\TEXTURES\\MANA",
         "ART_ASSETS\\TEXTURES\\CARD_FRAMES",
+        "ART_ASSETS\\TEXTURES\\DECKS",
+        "ART_ASSETS\\TEXTURES\\PLANESWALKERS",
         "ART_ASSETS\\FRONTEND"
     };
 
