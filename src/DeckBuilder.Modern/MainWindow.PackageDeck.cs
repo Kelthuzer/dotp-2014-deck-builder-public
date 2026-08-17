@@ -87,13 +87,9 @@ public partial class MainWindow
         if (wizard.ShowDialog() != true)
             return;
 
-        string[] usedReferences = _deck.MainDeck
-            .Concat(_deck.RegularUnlocks)
-            .Concat(_deck.PromoUnlocks)
-            .Select(entry => entry.Card.FileName)
-            .Where(value => !string.IsNullOrWhiteSpace(value))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+        IReadOnlyList<DeckBuilder.Core.Models.CardRecord> packagingCatalog = BuildCatalogSnapshot();
+        string[] usedReferences = PortableDeckCardReferencePlanner
+            .GetRequiredReferences(_deck, packagingCatalog)
             .ToArray();
 
         if (_workspaceCardVariants is null)
@@ -117,7 +113,7 @@ public partial class MainWindow
                 ? $"\n…и ещё {missingDefinitions.Length - 20}."
                 : string.Empty;
             MessageBox.Show(this,
-                "В распакованном workspace не найдены CARD_V2 для некоторых карт колоды.\n" +
+                "В распакованном workspace не найдены CARD_V2 для некоторых карт колоды или её автоматического land pool.\n" +
                 "Я не буду собирать неполный комплект, который может уронить игру.\n\n" +
                 shown + more,
                 "Не хватает определений карт",
@@ -171,10 +167,10 @@ public partial class MainWindow
             $"Deck UID: {wizard.DeckUid}\n" +
             $"Обложка: {coverMode} — {wizard.DeckBoxImage}\n" +
             $"Основная колода: {_deck.MainDeckCardCount} карт\n" +
-            $"Уникальных CARD_V2 в support WAD: {usedReferences.Length}\n" +
+            $"Исходных CARD_V2 (колода + unlocks + land pool): {usedReferences.Length}\n" +
             $"Конфликтов вариантов: {relevantConflicts.Length}\n\n" +
             $"Deck WAD:\n{wizard.OutputPath}\n\n" +
-            $"Cards/art/cover WAD:\n{supportWadPath}\n\n" +
+            $"Cards/art/runtime WAD:\n{supportWadPath}\n\n" +
             $"CPE блока {wizard.IdBlock} будет создан/проверен автоматически.",
             "Подтверждение полной упаковки",
             MessageBoxButton.YesNo,
@@ -221,7 +217,7 @@ public partial class MainWindow
                 wizard.Description,
                 wizard.IdBlock);
             ModernWadExportResult result = await Task.Run(() =>
-                ModernWadExporter.Export(_deck, BuildCatalogSnapshot(), options));
+                ModernWadExporter.Export(_deck, packagingCatalog, options));
 
             _deck.Uid = result.DeckUid;
             _deck.ContentPack = wizard.IdBlock;
@@ -240,8 +236,8 @@ public partial class MainWindow
                 $"Deck UID: {result.DeckUid}\n" +
                 $"Обложка: {coverMode} — {wizard.DeckBoxImage}\n\n" +
                 $"1. Deck WAD:\n{result.WadPath}\n\n" +
-                $"2. Cards/art/cover WAD:\n{support.WadPath}\n" +
-                $"   CARD_V2: {support.CardCount}; иллюстраций: {support.ArtCount}\n\n" +
+                $"2. Cards/art/runtime WAD:\n{support.WadPath}\n" +
+                $"   CARD_V2: {support.CardCount}; иллюстраций: {support.ArtCount}; runtime-файлов всего: {support.BuildResult.FileCount}\n\n" +
                 $"3. {enablerText}\n\n" +
                 "Для переноса колоды другому игроку передавайте оба WAD колоды/ресурсов и CPE её ID-блока." +
                 warningText,
@@ -251,7 +247,8 @@ public partial class MainWindow
 
             Status(
                 $"Упакована колода {result.DeckUid}: deck WAD + {support.CardCount} CARD_V2 + " +
-                $"{support.ArtCount} illustrations + {coverMode} deck cover {wizard.DeckBoxImage} + CPE {wizard.IdBlock}.");
+                $"{support.ArtCount} illustrations + portable runtime ({support.BuildResult.FileCount} files) + " +
+                $"{coverMode} deck cover {wizard.DeckBoxImage} + CPE {wizard.IdBlock}.");
         }
         catch (Exception exception)
         {
@@ -299,7 +296,7 @@ public partial class MainWindow
         }
 
         MessageBox.Show(this,
-            "Для полной упаковки нужен распакованный workspace с CARD_V2 и иллюстрациями.\n\n" +
+            "Для полной упаковки нужен распакованный workspace с CARD_V2 и всеми runtime-ресурсами карт.\n\n" +
             "Выберите корневую папку workspace. Билдер запомнит её и в следующий раз подхватит автоматически.",
             "Нужен workspace",
             MessageBoxButton.OK,
