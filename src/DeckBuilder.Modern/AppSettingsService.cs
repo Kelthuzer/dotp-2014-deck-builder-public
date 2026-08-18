@@ -115,8 +115,15 @@ internal static class AppSettingsService
 
         try
         {
-            return Path.GetFullPath(path.Trim())
-                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string fullPath = Path.GetFullPath(path.Trim());
+            string? root = Path.GetPathRoot(fullPath);
+            if (!string.IsNullOrWhiteSpace(root)
+                && string.Equals(fullPath, root, StringComparison.OrdinalIgnoreCase))
+            {
+                return root;
+            }
+
+            return fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         }
         catch
         {
