@@ -13,11 +13,11 @@ public partial class MainWindow
 
         _autoWorkspaceLoadAttempted = true;
 
-        string remembered = AppSettingsService.Current.LastWorkspaceDirectory;
-        if (string.IsNullOrWhiteSpace(remembered) || !Directory.Exists(remembered))
+        string configured = AppSettingsService.Current.WorkspaceDirectory;
+        if (string.IsNullOrWhiteSpace(configured) || !Directory.Exists(configured))
             return;
 
-        string fullPath = Path.GetFullPath(remembered);
+        string fullPath = Path.GetFullPath(configured);
         if (string.Equals(_workspaceDirectory, fullPath, StringComparison.OrdinalIgnoreCase)
             && _workspaceCardVariants is not null)
         {
@@ -28,9 +28,7 @@ public partial class MainWindow
         {
             Status("Workspace: жду завершения загрузки папки игры…");
             while (_loading)
-            {
                 await Task.Delay(100);
-            }
         }
 
         Status($"Workspace: автоматически загружаю {fullPath}…");
