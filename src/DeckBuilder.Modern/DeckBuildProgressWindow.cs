@@ -1,6 +1,8 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Threading;
 using DeckBuilder.GameData;
 
 namespace DeckBuilder.Modern;
@@ -39,7 +41,10 @@ internal sealed class DeckBuildProgressWindow : Window
         HorizontalAlignment = HorizontalAlignment.Right
     };
     private readonly CancellationTokenSource _cancellation = new();
+    private readonly Stopwatch _elapsed = Stopwatch.StartNew();
+    private readonly DispatcherTimer _elapsedTimer;
     private bool _completed;
+    private int _lastPercent;
 
     public CancellationToken CancellationToken => _cancellation.Token;
 
@@ -74,6 +79,10 @@ internal sealed class DeckBuildProgressWindow : Window
         Closing += OnClosing;
         Content = root;
 
+        _elapsedTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _elapsedTimer.Tick += (_, _) => RefreshProgressCaption();
+        _elapsedTimer.Start();
+
         SetProgress(0, "Подготовка", "Сборка ещё не началась.");
         AppThemeService.ApplyCurrent();
     }
@@ -89,12 +98,12 @@ internal sealed class DeckBuildProgressWindow : Window
             return;
         }
 
-        int bounded = Math.Clamp(percent, 0, 100);
+        _lastPercent = Math.Clamp(percent, 0, 100);
         _progressBar.IsIndeterminate = false;
-        _progressBar.Value = bounded;
+        _progressBar.Value = _lastPercent;
         _stageText.Text = stage;
         _detailText.Text = detail;
-        _percentText.Text = $"{bounded}%";
+        RefreshProgressCaption();
     }
 
     public void SetIndeterminate(string stage, string detail)
@@ -108,14 +117,33 @@ internal sealed class DeckBuildProgressWindow : Window
         _progressBar.IsIndeterminate = true;
         _stageText.Text = stage;
         _detailText.Text = detail;
-        _percentText.Text = string.Empty;
+        _percentText.Text = $"Прошло {FormatElapsed()}";
     }
 
     public void MarkCompleted()
     {
         _completed = true;
+        _elapsed.Stop();
+        _elapsedTimer.Stop();
         _cancelButton.IsEnabled = false;
+        RefreshProgressCaption();
     }
+
+    private void RefreshProgressCaption()
+    {
+        if (_progressBar.IsIndeterminate)
+        {
+            _percentText.Text = $"Прошло {FormatElapsed()}";
+            return;
+        }
+
+        _percentText.Text = $"{_lastPercent}% · прошло {FormatElapsed()}";
+    }
+
+    private string FormatElapsed() =>
+        _elapsed.Elapsed.TotalHours >= 1
+            ? _elapsed.Elapsed.ToString(@"hh\:mm\:ss")
+            : _elapsed.Elapsed.ToString(@"mm\:ss");
 
     private void RequestCancel()
     {
