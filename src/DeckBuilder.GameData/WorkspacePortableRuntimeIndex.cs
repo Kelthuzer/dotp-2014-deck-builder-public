@@ -18,17 +18,19 @@ internal sealed record WorkspacePortableRuntimeResolution(
 }
 
 /// <summary>
-/// One immutable view of the effective DATA_ALL_PLATFORMS runtime in an extracted workspace.
-/// WAD priority and symbol aliases are calculated once, then reused while CARD_V2 dependencies
-/// expand to a fixpoint.
+/// Immutable view of the effective DATA_ALL_PLATFORMS runtime in an extracted workspace.
+/// Direct resource/function aliases are intentionally separated from LOL global symbols: CARD_V2
+/// may select a declared function or concrete file, while global constants are only followed after
+/// a runtime file has already become reachable. This prevents unrelated global registries from
+/// turning one portable deck into a copy of the whole workspace.
 /// </summary>
 internal sealed class WorkspacePortableRuntimeIndex
 {
-    // These trees are small/shared and are commonly addressed indirectly (for example generated
-    // creature-type text ids). Copying them as a unit is safer than trying to infer every dynamic id.
+    // SPECS and permanent text contain small shared tables that are often addressed through generated
+    // ids. FUNCTIONS are deliberately NOT copied wholesale: only functions reachable from a card or
+    // another selected runtime file are included.
     private static readonly string[] AlwaysIncludeTrees =
     {
-        "FUNCTIONS",
         "SPECS",
         "TEXT_PERMANENT"
     };
@@ -66,17 +68,39 @@ internal sealed class WorkspacePortableRuntimeIndex
         @"(?m)^\s*([A-Za-z_][A-Za-z0-9_.:]*)\s*=",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    // Runtime CARD_V2 discovery is deliberately semantic instead of "every token that happens to
+    // equal a card alias". CW/RSN helpers commonly store card ids in CARD/TOKEN variables or pass
+    // them to card/token functions; broad identifier matching caused thousands of false dependencies.
+    private static readonly Regex RuntimeCardAssignmentRegex = new(
+        @"(?im)^\s*([A-Za-z_][A-Za-z0-9_.:]*(?:CARD|TOKEN|MULTIVERSE)[A-Za-z0-9_.:]*)\s*=\s*[""']?([A-Za-z0-9_]+)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex RuntimeCardCallRegex = new(
+        @"(?i)\b[A-Za-z_][A-Za-z0-9_.:]*(?:CARD|TOKEN)[A-Za-z0-9_.:]*\s*\(\s*[""']?([A-Za-z0-9_]+)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex RuntimeCardAttributeRegex = new(
+        @"(?i)\b[A-Za-z0-9_.:-]*(?:CARD|TOKEN|MULTIVERSE)[A-Za-z0-9_.:-]*\s*=\s*[""']([A-Za-z0-9_]+)[""']",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex RuntimeTokenRegex = new(
+        @"\b(?:RSN_)?TOKEN_[A-Za-z0-9_]+\b",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
     private readonly IReadOnlyDictionary<string, RuntimeResource> _resourcesByPath;
-    private readonly IReadOnlyDictionary<string, RuntimeResource[]> _resourcesByAlias;
+    private readonly IReadOnlyDictionary<string, RuntimeResource[]> _resourcesByDirectAlias;
+    private readonly IReadOnlyDictionary<string, RuntimeResource[]> _resourcesByGlobalAlias;
     private readonly IReadOnlyList<string> _alwaysIncludedPaths;
 
     private WorkspacePortableRuntimeIndex(
         IReadOnlyDictionary<string, RuntimeResource> resourcesByPath,
-        IReadOnlyDictionary<string, RuntimeResource[]> resourcesByAlias,
+        IReadOnlyDictionary<string, RuntimeResource[]> resourcesByDirectAlias,
+        IReadOnlyDictionary<string, RuntimeResource[]> resourcesByGlobalAlias,
         IReadOnlyList<string> alwaysIncludedPaths)
     {
         _resourcesByPath = resourcesByPath;
-        _resourcesByAlias = resourcesByAlias;
+        _resourcesByDirectAlias = resourcesByDirectAlias;
+        _resourcesByGlobalAlias = resourcesByGlobalAlias;
         _alwaysIncludedPaths = alwaysIncludedPaths;
     }
 
@@ -92,9 +116,7 @@ internal sealed class WorkspacePortableRuntimeIndex
         ArgumentNullException.ThrowIfNull(warningKeys);
 
         if (string.IsNullOrWhiteSpace(workspaceDirectory) || !Directory.Exists(workspaceDirectory))
-        {
             return Empty();
-        }
 
         string workspace = Path.GetFullPath(workspaceDirectory);
         string[] manifests = Directory.EnumerateFiles(
@@ -104,9 +126,7 @@ internal sealed class WorkspacePortableRuntimeIndex
             .OrderBy(path => Path.GetDirectoryName(path), StringComparer.OrdinalIgnoreCase)
             .ToArray();
         if (manifests.Length == 0)
-        {
             return Empty();
-        }
 
         GameVersionPackageService packageService = new();
         List<RuntimeResource> candidates = new();
@@ -174,7 +194,7 @@ internal sealed class WorkspacePortableRuntimeIndex
         Dictionary<string, RuntimeResource> resourcesByPath = effective.ToDictionary(
             resource => resource.RelativePath,
             StringComparer.OrdinalIgnoreCase);
-        IReadOnlyDictionary<string, RuntimeResource[]> resourcesByAlias = BuildAliasIndex(effective);
+        RuntimeAliasIndexes aliasIndexes = BuildAliasIndexes(effective);
         string[] alwaysIncludedPaths = effective
             .Where(resource => AlwaysIncludeTrees.Any(tree => StartsWithTree(resource.RelativePath, tree)))
             .Select(resource => resource.RelativePath)
@@ -182,7 +202,8 @@ internal sealed class WorkspacePortableRuntimeIndex
 
         return new WorkspacePortableRuntimeIndex(
             resourcesByPath,
-            resourcesByAlias,
+            aliasIndexes.Direct,
+            aliasIndexes.Globals,
             alwaysIncludedPaths);
     }
 
@@ -222,7 +243,8 @@ internal sealed class WorkspacePortableRuntimeIndex
             if (string.IsNullOrWhiteSpace(identifier))
                 continue;
 
-            if (TryResolveResource(identifier, out RuntimeResource resource))
+            // Explicit packaging roots are paths/names, never arbitrary LOL globals.
+            if (TryResolveResource(identifier, allowGlobals: false, out RuntimeResource resource))
                 Select(resource);
             else
                 missingRoots.Add(identifier.Trim());
@@ -237,6 +259,8 @@ internal sealed class WorkspacePortableRuntimeIndex
                 cardReferences,
                 Select,
                 scannedTextFiles,
+                allowGlobalResourceAliases: false,
+                discoverCardReferences: false,
                 warnings,
                 warningKeys,
                 cancellationToken);
@@ -251,6 +275,8 @@ internal sealed class WorkspacePortableRuntimeIndex
                 cardReferences,
                 Select,
                 scannedTextFiles,
+                allowGlobalResourceAliases: true,
+                discoverCardReferences: true,
                 warnings,
                 warningKeys,
                 cancellationToken);
@@ -302,6 +328,8 @@ internal sealed class WorkspacePortableRuntimeIndex
         ISet<string> cardReferences,
         Action<RuntimeResource> selectResource,
         ISet<string> scannedTextFiles,
+        bool allowGlobalResourceAliases,
+        bool discoverCardReferences,
         ICollection<string> warnings,
         ISet<string> warningKeys,
         CancellationToken cancellationToken)
@@ -321,26 +349,60 @@ internal sealed class WorkspacePortableRuntimeIndex
             return;
         }
 
+        if (discoverCardReferences)
+            ScanRuntimeCardReferences(text, cardAliases, cardReferences);
+
         foreach (Match match in IdentifierRegex.Matches(text))
         {
             cancellationToken.ThrowIfCancellationRequested();
             string token = match.Value;
-
-            if (WorkspaceCardDependencyResolver.TryResolveReferenceAlias(token, cardAliases, out string cardReference))
-                cardReferences.Add(cardReference);
-
-            if (TryResolveResource(token, out RuntimeResource resource))
+            if (TryResolveResource(token, allowGlobalResourceAliases, out RuntimeResource resource))
                 selectResource(resource);
         }
     }
 
-    private bool TryResolveResource(string token, out RuntimeResource resource)
+    private static void ScanRuntimeCardReferences(
+        string text,
+        IReadOnlyDictionary<string, string> cardAliases,
+        ISet<string> cardReferences)
+    {
+        void Resolve(string token)
+        {
+            if (WorkspaceCardDependencyResolver.TryResolveReferenceAlias(token, cardAliases, out string cardReference))
+                cardReferences.Add(cardReference);
+        }
+
+        foreach (Match match in RuntimeCardAssignmentRegex.Matches(text))
+            Resolve(match.Groups[2].Value);
+        foreach (Match match in RuntimeCardCallRegex.Matches(text))
+            Resolve(match.Groups[1].Value);
+        foreach (Match match in RuntimeCardAttributeRegex.Matches(text))
+            Resolve(match.Groups[1].Value);
+        foreach (Match match in RuntimeTokenRegex.Matches(text))
+            Resolve(match.Value);
+    }
+
+    private bool TryResolveResource(string token, bool allowGlobals, out RuntimeResource resource)
     {
         foreach (string alias in EnumerateTokenAliases(token))
         {
-            if (!_resourcesByAlias.TryGetValue(alias, out RuntimeResource[]? matches) || matches.Length != 1)
-                continue;
+            if (TryResolveUnique(_resourcesByDirectAlias, alias, out resource))
+                return true;
+            if (allowGlobals && TryResolveUnique(_resourcesByGlobalAlias, alias, out resource))
+                return true;
+        }
 
+        resource = null!;
+        return false;
+    }
+
+    private static bool TryResolveUnique(
+        IReadOnlyDictionary<string, RuntimeResource[]> index,
+        string alias,
+        out RuntimeResource resource)
+    {
+        if (index.TryGetValue(alias, out RuntimeResource[]? matches) && matches.Length == 1)
+        {
             resource = matches[0];
             return true;
         }
@@ -349,14 +411,15 @@ internal sealed class WorkspacePortableRuntimeIndex
         return false;
     }
 
-    private static IReadOnlyDictionary<string, RuntimeResource[]> BuildAliasIndex(
-        IReadOnlyList<RuntimeResource> resources)
+    private static RuntimeAliasIndexes BuildAliasIndexes(IReadOnlyList<RuntimeResource> resources)
     {
-        Dictionary<string, List<RuntimeResource>> aliases = new(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, List<RuntimeResource>> direct = new(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, List<RuntimeResource>> globals = new(StringComparer.OrdinalIgnoreCase);
+
         foreach (RuntimeResource resource in resources)
         {
             foreach (string alias in EnumerateResourceAliases(resource.RelativePath))
-                AddAlias(aliases, alias, resource);
+                AddAlias(direct, alias, resource);
 
             if (!StartsWithTree(resource.RelativePath, "FUNCTIONS") || !IsTextResource(resource))
                 continue;
@@ -367,11 +430,11 @@ internal sealed class WorkspacePortableRuntimeIndex
                 foreach (Match match in LuaFunctionRegex.Matches(text))
                 {
                     string symbol = match.Groups[1].Success ? match.Groups[1].Value : match.Groups[2].Value;
-                    AddSymbolAliases(aliases, symbol, resource);
+                    AddSymbolAliases(direct, symbol, resource);
                 }
 
                 foreach (Match match in LuaGlobalAssignmentRegex.Matches(text))
-                    AddSymbolAliases(aliases, match.Groups[1].Value, resource);
+                    AddSymbolAliases(globals, match.Groups[1].Value, resource);
             }
             catch
             {
@@ -379,7 +442,12 @@ internal sealed class WorkspacePortableRuntimeIndex
             }
         }
 
-        return aliases.ToDictionary(
+        return new RuntimeAliasIndexes(ToImmutableAliasIndex(direct), ToImmutableAliasIndex(globals));
+    }
+
+    private static IReadOnlyDictionary<string, RuntimeResource[]> ToImmutableAliasIndex(
+        IDictionary<string, List<RuntimeResource>> aliases) =>
+        aliases.ToDictionary(
             pair => pair.Key,
             pair => pair.Value
                 .GroupBy(resource => resource.RelativePath, StringComparer.OrdinalIgnoreCase)
@@ -387,7 +455,6 @@ internal sealed class WorkspacePortableRuntimeIndex
                 .OrderBy(resource => resource.RelativePath, StringComparer.OrdinalIgnoreCase)
                 .ToArray(),
             StringComparer.OrdinalIgnoreCase);
-    }
 
     private static void AddSymbolAliases(
         IDictionary<string, List<RuntimeResource>> aliases,
@@ -527,7 +594,12 @@ internal sealed class WorkspacePortableRuntimeIndex
     private static WorkspacePortableRuntimeIndex Empty() => new(
         new Dictionary<string, RuntimeResource>(StringComparer.OrdinalIgnoreCase),
         new Dictionary<string, RuntimeResource[]>(StringComparer.OrdinalIgnoreCase),
+        new Dictionary<string, RuntimeResource[]>(StringComparer.OrdinalIgnoreCase),
         Array.Empty<string>());
+
+    private sealed record RuntimeAliasIndexes(
+        IReadOnlyDictionary<string, RuntimeResource[]> Direct,
+        IReadOnlyDictionary<string, RuntimeResource[]> Globals);
 
     private sealed record RuntimeResource(
         string RelativePath,
