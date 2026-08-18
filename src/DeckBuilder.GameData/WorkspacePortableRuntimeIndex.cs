@@ -26,6 +26,8 @@ internal sealed record WorkspacePortableRuntimeResolution(
 /// </summary>
 internal sealed class WorkspacePortableRuntimeIndex
 {
+    private const int MaxRuntimeDiscoveredCardReferences = 128;
+
     // SPECS and permanent text contain small shared tables that are often addressed through generated
     // ids. FUNCTIONS are deliberately NOT copied wholesale: only functions reachable from a card or
     // another selected runtime file are included.
@@ -82,10 +84,6 @@ internal sealed class WorkspacePortableRuntimeIndex
     private static readonly Regex RuntimeCardAttributeRegex = new(
         @"(?i)\b[A-Za-z0-9_.:-]*(?:CARD|TOKEN|MULTIVERSE)[A-Za-z0-9_.:-]*\s*=\s*[""']([A-Za-z0-9_]+)[""']",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
-    private static readonly Regex RuntimeTokenRegex = new(
-        @"\b(?:RSN_)?TOKEN_[A-Za-z0-9_]+\b",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     private readonly IReadOnlyDictionary<string, RuntimeResource> _resourcesByPath;
     private readonly IReadOnlyDictionary<string, RuntimeResource[]> _resourcesByDirectAlias;
@@ -368,8 +366,16 @@ internal sealed class WorkspacePortableRuntimeIndex
     {
         void Resolve(string token)
         {
-            if (WorkspaceCardDependencyResolver.TryResolveReferenceAlias(token, cardAliases, out string cardReference))
-                cardReferences.Add(cardReference);
+            if (!WorkspaceCardDependencyResolver.TryResolveReferenceAlias(token, cardAliases, out string cardReference))
+                return;
+            if (!cardReferences.Add(cardReference))
+                return;
+            if (cardReferences.Count > MaxRuntimeDiscoveredCardReferences)
+            {
+                throw new InvalidDataException(
+                    $"Portable runtime exposed more than {MaxRuntimeDiscoveredCardReferences} CARD_V2 references. " +
+                    "This usually means a shared card/token registry was treated as a deck dependency; packaging was stopped before producing an oversized WAD.");
+            }
         }
 
         foreach (Match match in RuntimeCardAssignmentRegex.Matches(text))
@@ -378,8 +384,6 @@ internal sealed class WorkspacePortableRuntimeIndex
             Resolve(match.Groups[1].Value);
         foreach (Match match in RuntimeCardAttributeRegex.Matches(text))
             Resolve(match.Groups[1].Value);
-        foreach (Match match in RuntimeTokenRegex.Matches(text))
-            Resolve(match.Value);
     }
 
     private bool TryResolveResource(string token, bool allowGlobals, out RuntimeResource resource)
