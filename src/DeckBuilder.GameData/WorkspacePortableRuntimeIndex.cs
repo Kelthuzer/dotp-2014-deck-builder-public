@@ -18,20 +18,25 @@ internal sealed record WorkspacePortableRuntimeResolution(
 }
 
 /// <summary>
-/// Immutable view of the effective DATA_ALL_PLATFORMS runtime in an extracted workspace.
-/// Direct resource/function aliases are intentionally separated from LOL global symbols: CARD_V2
-/// may select a declared function or concrete file, while global constants are only followed after
-/// a runtime file has already become reachable. This prevents unrelated global registries from
-/// turning one portable deck into a copy of the whole workspace.
+/// Immutable index of the effective DATA_ALL_PLATFORMS runtime in an extracted workspace.
+///
+/// Runtime names have three different meanings and must not share one flat alias table:
+///  - concrete files (TEXTURES\\FOO.TDX, SPECS\\BAR.TXT),
+///  - declared LOL functions,
+///  - LOL global symbols/constants.
+///
+/// Keeping those namespaces separate is essential. Treating every bare word in CARD_V2/LOL text as
+/// a possible file basename caused unrelated animation binaries and textures to become dependencies,
+/// eventually turning a small portable deck into a gigabyte-scale WAD.
 /// </summary>
 internal sealed class WorkspacePortableRuntimeIndex
 {
     private const int MaxRuntimeDiscoveredCardReferences = 128;
     private const int MaxSelectedRuntimeResources = 1024;
 
-    // Some engine lookups are data-driven and do not name these files directly. Keep only the
-    // small, proven creature-type support bundle implicit. Everything else in SPECS and
-    // TEXT_PERMANENT is dependency-driven; copying those trees wholesale produced >1 GB deck WADs.
+    // Creature type selection is an engine/data-driven lookup and does not name these files directly.
+    // Keep only this small compatibility bundle implicit. All other SPECS/TEXT resources are selected
+    // through actual references.
     private static readonly string[] ImplicitSharedResourcePaths =
     {
         "SPECS\\CREATURE_TYPES.TXT"
@@ -39,8 +44,6 @@ internal sealed class WorkspacePortableRuntimeIndex
 
     private const string CreatureTypeTextPrefix = "TEXT_PERMANENT\\CREATURE_TYPE_TEXT_";
 
-    // These are game-content roots, not support runtime. CARD_V2 is handled by the card closure;
-    // deck/unlock/personality definitions belong to the deck WAD and must never leak in here.
     private static readonly string[] ForbiddenTrees =
     {
         "CARDS",
@@ -64,6 +67,14 @@ internal sealed class WorkspacePortableRuntimeIndex
         @"[A-Za-z0-9_./\\:-]{3,}",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    private static readonly Regex QuotedValueRegex = new(
+        "[\\\"']([^\\\"'\\r\\n]{3,})[\\\"']",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex PathReferenceRegex = new(
+        @"[A-Za-z0-9_.:-]+(?:[\\/][A-Za-z0-9_.:-]+)+",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
     private static readonly Regex LuaFunctionRegex = new(
         @"\bfunction\s+([A-Za-z_][A-Za-z0-9_.:]*)|\b([A-Za-z_][A-Za-z0-9_.:]*)\s*=\s*function\b",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
@@ -72,9 +83,6 @@ internal sealed class WorkspacePortableRuntimeIndex
         @"(?m)^\s*([A-Za-z_][A-Za-z0-9_.:]*)\s*=",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-    // Runtime CARD_V2 discovery is deliberately semantic instead of "every token that happens to
-    // equal a card alias". CW/RSN helpers commonly store card ids in CARD/TOKEN variables or pass
-    // them to card/token functions; broad identifier matching caused thousands of false dependencies.
     private static readonly Regex RuntimeCardAssignmentRegex = new(
         @"(?im)^\s*([A-Za-z_][A-Za-z0-9_.:]*(?:CARD|TOKEN|MULTIVERSE)[A-Za-z0-9_.:]*)\s*=\s*[""']?([A-Za-z0-9_]+)",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -88,18 +96,21 @@ internal sealed class WorkspacePortableRuntimeIndex
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private readonly IReadOnlyDictionary<string, RuntimeResource> _resourcesByPath;
-    private readonly IReadOnlyDictionary<string, RuntimeResource[]> _resourcesByDirectAlias;
+    private readonly IReadOnlyDictionary<string, RuntimeResource[]> _resourcesByConcreteAlias;
+    private readonly IReadOnlyDictionary<string, RuntimeResource[]> _resourcesByFunctionAlias;
     private readonly IReadOnlyDictionary<string, RuntimeResource[]> _resourcesByGlobalAlias;
     private readonly IReadOnlyList<string> _implicitSharedPaths;
 
     private WorkspacePortableRuntimeIndex(
         IReadOnlyDictionary<string, RuntimeResource> resourcesByPath,
-        IReadOnlyDictionary<string, RuntimeResource[]> resourcesByDirectAlias,
+        IReadOnlyDictionary<string, RuntimeResource[]> resourcesByConcreteAlias,
+        IReadOnlyDictionary<string, RuntimeResource[]> resourcesByFunctionAlias,
         IReadOnlyDictionary<string, RuntimeResource[]> resourcesByGlobalAlias,
         IReadOnlyList<string> implicitSharedPaths)
     {
         _resourcesByPath = resourcesByPath;
-        _resourcesByDirectAlias = resourcesByDirectAlias;
+        _resourcesByConcreteAlias = resourcesByConcreteAlias;
+        _resourcesByFunctionAlias = resourcesByFunctionAlias;
         _resourcesByGlobalAlias = resourcesByGlobalAlias;
         _implicitSharedPaths = implicitSharedPaths;
     }
@@ -202,7 +213,8 @@ internal sealed class WorkspacePortableRuntimeIndex
 
         return new WorkspacePortableRuntimeIndex(
             resourcesByPath,
-            aliasIndexes.Direct,
+            aliasIndexes.Concrete,
+            aliasIndexes.Functions,
             aliasIndexes.Globals,
             implicitSharedPaths);
     }
@@ -224,6 +236,11 @@ internal sealed class WorkspacePortableRuntimeIndex
             return WorkspacePortableRuntimeResolution.Empty;
 
         HashSet<string> selectedPaths = _implicitSharedPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, string> selectedBy = selectedPaths.ToDictionary(
+            path => path,
+            _ => "implicit creature-type compatibility bundle",
+            StringComparer.OrdinalIgnoreCase);
+
         if (selectedPaths.Count > MaxSelectedRuntimeResources)
         {
             throw new InvalidDataException(
@@ -236,16 +253,17 @@ internal sealed class WorkspacePortableRuntimeIndex
         HashSet<string> queuedRuntimePaths = new(StringComparer.OrdinalIgnoreCase);
         Queue<RuntimeResource> pendingText = new();
 
-        void Select(RuntimeResource resource)
+        void Select(RuntimeResource resource, string reason)
         {
             if (!selectedPaths.Add(resource.RelativePath))
                 return;
 
+            selectedBy[resource.RelativePath] = reason;
             if (selectedPaths.Count > MaxSelectedRuntimeResources)
             {
                 throw new InvalidDataException(
                     $"Portable runtime dependency closure exceeded {MaxSelectedRuntimeResources:N0} resources while adding {resource.RelativePath}. " +
-                    "Packaging was stopped before producing an oversized WAD; inspect the dependency chain instead of copying an entire runtime tree.");
+                    $"Dependency: {reason}. Packaging was stopped before producing an oversized WAD.");
             }
 
             if (IsTextResource(resource) && queuedRuntimePaths.Add(resource.RelativePath))
@@ -258,9 +276,8 @@ internal sealed class WorkspacePortableRuntimeIndex
             if (string.IsNullOrWhiteSpace(identifier))
                 continue;
 
-            // Explicit packaging roots are paths/names, never arbitrary LOL globals.
-            if (TryResolveResource(identifier, allowGlobals: false, out RuntimeResource resource))
-                Select(resource);
+            if (TryResolveExplicitRoot(identifier, out RuntimeResource resource))
+                Select(resource, $"explicit packaging root '{identifier.Trim()}'");
             else
                 missingRoots.Add(identifier.Trim());
         }
@@ -270,11 +287,12 @@ internal sealed class WorkspacePortableRuntimeIndex
             cancellationToken.ThrowIfCancellationRequested();
             ScanTextFile(
                 cardXmlPath,
+                $"CARD_V2 {Path.GetFileName(cardXmlPath)}",
                 cardAliases,
                 cardReferences,
                 Select,
                 scannedTextFiles,
-                allowGlobalResourceAliases: false,
+                allowGlobalSymbols: false,
                 discoverCardReferences: false,
                 warnings,
                 warningKeys,
@@ -286,11 +304,12 @@ internal sealed class WorkspacePortableRuntimeIndex
             cancellationToken.ThrowIfCancellationRequested();
             ScanTextFile(
                 resource.StoragePath,
+                resource.RelativePath,
                 cardAliases,
                 cardReferences,
                 Select,
                 scannedTextFiles,
-                allowGlobalResourceAliases: true,
+                allowGlobalSymbols: true,
                 discoverCardReferences: true,
                 warnings,
                 warningKeys,
@@ -339,11 +358,12 @@ internal sealed class WorkspacePortableRuntimeIndex
 
     private void ScanTextFile(
         string path,
+        string sourceLabel,
         IReadOnlyDictionary<string, string> cardAliases,
         ISet<string> cardReferences,
-        Action<RuntimeResource> selectResource,
+        Action<RuntimeResource, string> selectResource,
         ISet<string> scannedTextFiles,
-        bool allowGlobalResourceAliases,
+        bool allowGlobalSymbols,
         bool discoverCardReferences,
         ICollection<string> warnings,
         ISet<string> warningKeys,
@@ -367,12 +387,32 @@ internal sealed class WorkspacePortableRuntimeIndex
         if (discoverCardReferences)
             ScanRuntimeCardReferences(text, cardAliases, cardReferences);
 
+        // Bare identifiers are code symbols, not arbitrary file names. Resolve them only against
+        // declared functions and (after a function is reachable) LOL globals/constants.
         foreach (Match match in IdentifierRegex.Matches(text))
         {
             cancellationToken.ThrowIfCancellationRequested();
             string token = match.Value;
-            if (TryResolveResource(token, allowGlobalResourceAliases, out RuntimeResource resource))
-                selectResource(resource);
+            if (TryResolveSymbol(token, allowGlobalSymbols, out RuntimeResource resource))
+                selectResource(resource, $"{sourceLabel} -> symbol '{token}'");
+        }
+
+        // Concrete assets/tables must be expressed as a quoted value or an actual path. A bare word
+        // like GARRUK_BG must not silently resolve to ANIMATIONBINARIES\\GARRUK_BG.BIN.
+        foreach (Match match in QuotedValueRegex.Matches(text))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string token = match.Groups[1].Value.Trim();
+            if (TryResolveConcreteReference(token, allowBareSymbolicAsset: true, out RuntimeResource resource))
+                selectResource(resource, $"{sourceLabel} -> quoted resource '{token}'");
+        }
+
+        foreach (Match match in PathReferenceRegex.Matches(text))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string token = match.Value;
+            if (TryResolveConcreteReference(token, allowBareSymbolicAsset: false, out RuntimeResource resource))
+                selectResource(resource, $"{sourceLabel} -> path '{token}'");
         }
     }
 
@@ -403,13 +443,58 @@ internal sealed class WorkspacePortableRuntimeIndex
             Resolve(match.Groups[1].Value);
     }
 
-    private bool TryResolveResource(string token, bool allowGlobals, out RuntimeResource resource)
+    private bool TryResolveExplicitRoot(string token, out RuntimeResource resource)
+    {
+        if (TryResolveConcreteReference(token, allowBareSymbolicAsset: true, out resource))
+            return true;
+
+        return TryResolveUniqueAliases(_resourcesByFunctionAlias, token, out resource);
+    }
+
+    private bool TryResolveSymbol(string token, bool allowGlobals, out RuntimeResource resource)
     {
         foreach (string alias in EnumerateTokenAliases(token))
         {
-            if (TryResolveUnique(_resourcesByDirectAlias, alias, out resource))
+            if (TryResolveUnique(_resourcesByFunctionAlias, alias, out resource))
                 return true;
             if (allowGlobals && TryResolveUnique(_resourcesByGlobalAlias, alias, out resource))
+                return true;
+        }
+
+        resource = null!;
+        return false;
+    }
+
+    private bool TryResolveConcreteReference(
+        string token,
+        bool allowBareSymbolicAsset,
+        out RuntimeResource resource)
+    {
+        bool explicitReference = IsExplicitResourceReference(token);
+        foreach (string alias in EnumerateTokenAliases(token))
+        {
+            if (!TryResolveUnique(_resourcesByConcreteAlias, alias, out RuntimeResource candidate))
+                continue;
+
+            if (explicitReference || (allowBareSymbolicAsset && IsBareSymbolicResource(candidate.RelativePath)))
+            {
+                resource = candidate;
+                return true;
+            }
+        }
+
+        resource = null!;
+        return false;
+    }
+
+    private static bool TryResolveUniqueAliases(
+        IReadOnlyDictionary<string, RuntimeResource[]> index,
+        string token,
+        out RuntimeResource resource)
+    {
+        foreach (string alias in EnumerateTokenAliases(token))
+        {
+            if (TryResolveUnique(index, alias, out resource))
                 return true;
         }
 
@@ -434,13 +519,14 @@ internal sealed class WorkspacePortableRuntimeIndex
 
     private static RuntimeAliasIndexes BuildAliasIndexes(IReadOnlyList<RuntimeResource> resources)
     {
-        Dictionary<string, List<RuntimeResource>> direct = new(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, List<RuntimeResource>> concrete = new(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, List<RuntimeResource>> functions = new(StringComparer.OrdinalIgnoreCase);
         Dictionary<string, List<RuntimeResource>> globals = new(StringComparer.OrdinalIgnoreCase);
 
         foreach (RuntimeResource resource in resources)
         {
             foreach (string alias in EnumerateResourceAliases(resource.RelativePath))
-                AddAlias(direct, alias, resource);
+                AddAlias(concrete, alias, resource);
 
             if (!StartsWithTree(resource.RelativePath, "FUNCTIONS") || !IsTextResource(resource))
                 continue;
@@ -451,7 +537,7 @@ internal sealed class WorkspacePortableRuntimeIndex
                 foreach (Match match in LuaFunctionRegex.Matches(text))
                 {
                     string symbol = match.Groups[1].Success ? match.Groups[1].Value : match.Groups[2].Value;
-                    AddSymbolAliases(direct, symbol, resource);
+                    AddSymbolAliases(functions, symbol, resource);
                 }
 
                 foreach (Match match in LuaGlobalAssignmentRegex.Matches(text))
@@ -463,7 +549,10 @@ internal sealed class WorkspacePortableRuntimeIndex
             }
         }
 
-        return new RuntimeAliasIndexes(ToImmutableAliasIndex(direct), ToImmutableAliasIndex(globals));
+        return new RuntimeAliasIndexes(
+            ToImmutableAliasIndex(concrete),
+            ToImmutableAliasIndex(functions),
+            ToImmutableAliasIndex(globals));
     }
 
     private static IReadOnlyDictionary<string, RuntimeResource[]> ToImmutableAliasIndex(
@@ -560,6 +649,22 @@ internal sealed class WorkspacePortableRuntimeIndex
         return dot > slash ? value[..dot] : value;
     }
 
+    private static bool IsExplicitResourceReference(string token)
+    {
+        string value = token.Trim();
+        if (value.IndexOfAny(['\\', '/']) >= 0)
+            return true;
+
+        string extension = Path.GetExtension(value);
+        return !string.IsNullOrWhiteSpace(extension);
+    }
+
+    private static bool IsBareSymbolicResource(string relativePath) =>
+        StartsWithTree(relativePath, "ART_ASSETS\\TEXTURES")
+        || StartsWithTree(relativePath, "ART_ASSETS\\FRONTEND")
+        || StartsWithTree(relativePath, "SPECS")
+        || StartsWithTree(relativePath, "TEXT_PERMANENT");
+
     private static bool IsTextResource(RuntimeResource resource) =>
         TextExtensions.Contains(Path.GetExtension(resource.RelativePath));
 
@@ -624,10 +729,12 @@ internal sealed class WorkspacePortableRuntimeIndex
         new Dictionary<string, RuntimeResource>(StringComparer.OrdinalIgnoreCase),
         new Dictionary<string, RuntimeResource[]>(StringComparer.OrdinalIgnoreCase),
         new Dictionary<string, RuntimeResource[]>(StringComparer.OrdinalIgnoreCase),
+        new Dictionary<string, RuntimeResource[]>(StringComparer.OrdinalIgnoreCase),
         Array.Empty<string>());
 
     private sealed record RuntimeAliasIndexes(
-        IReadOnlyDictionary<string, RuntimeResource[]> Direct,
+        IReadOnlyDictionary<string, RuntimeResource[]> Concrete,
+        IReadOnlyDictionary<string, RuntimeResource[]> Functions,
         IReadOnlyDictionary<string, RuntimeResource[]> Globals);
 
     private sealed record RuntimeResource(
