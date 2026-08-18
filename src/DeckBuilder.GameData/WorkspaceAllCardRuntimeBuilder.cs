@@ -31,6 +31,20 @@ public sealed class WorkspaceAllCardRuntimeBuilder
         "TEXT_PERMANENT"
     };
 
+    // Version workspaces can contain editor/source-control files inside otherwise valid runtime trees.
+    // Keep the conservative whole-tree policy, but only for formats the game can actually consume.
+    private static readonly HashSet<string> SharedRuntimeGameExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".LOL",
+        ".LUA",
+        ".TXT",
+        ".XML",
+        ".BSF",
+        ".CSV",
+        ".INI",
+        ".JSON"
+    };
+
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
     private readonly UnpackedContentWadBuilder _wadBuilder = new();
 
@@ -298,8 +312,12 @@ public sealed class WorkspaceAllCardRuntimeBuilder
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     string? relativePath = GetAllPlatformsRelativePath(file.ArchivePath);
-                    if (relativePath is null || !SharedRuntimeTrees.Any(tree => StartsWithTree(relativePath, tree)))
+                    if (relativePath is null
+                        || !SharedRuntimeTrees.Any(tree => StartsWithTree(relativePath, tree))
+                        || !IsSharedRuntimeGameFile(relativePath))
+                    {
                         continue;
+                    }
 
                     string storagePath = Path.Combine(wadDirectory, file.StoragePath.Replace('/', Path.DirectorySeparatorChar));
                     if (!File.Exists(storagePath))
@@ -317,6 +335,16 @@ public sealed class WorkspaceAllCardRuntimeBuilder
         }
 
         return paths;
+    }
+
+    private static bool IsSharedRuntimeGameFile(string relativePath)
+    {
+        string normalized = relativePath.Replace('/', '\\');
+        string[] parts = normalized.Split('\\', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Any(part => part.StartsWith('.', StringComparison.Ordinal)))
+            return false;
+
+        return SharedRuntimeGameExtensions.Contains(Path.GetExtension(normalized));
     }
 
     private static IReadOnlyDictionary<string, int> BuildResourceCounts(IEnumerable<string> paths) =>
