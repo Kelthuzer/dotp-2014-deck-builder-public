@@ -34,6 +34,7 @@
         <Separator />
         <MenuItem Header="_WAD Workshop…" Click="WadWorkshop_Click" />
         <MenuItem Header="Build cards/decks from _unpacked…" Click="BuildFromUnpackedContent_Click" />
+        <MenuItem Header="Build all-card _runtime WAD…" Click="BuildAllCardRuntime_Click" />
       </MenuItem>
       <MenuItem Header="_Help">
         <MenuItem Header="About modern build" Click="About_Click" />
