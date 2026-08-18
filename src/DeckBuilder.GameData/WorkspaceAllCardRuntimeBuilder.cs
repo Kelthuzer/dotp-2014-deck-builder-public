@@ -82,10 +82,15 @@ public sealed class WorkspaceAllCardRuntimeBuilder
             ?? throw new DirectoryNotFoundException("The runtime WAD output directory is missing.");
         Directory.CreateDirectory(outputDirectory);
 
+        int sourceMaxOrder = FindHighestWorkspaceWadOrder(workspace, cancellationToken);
+        if (sourceMaxOrder == int.MaxValue)
+            throw new InvalidDataException("The workspace contains a WAD with the maximum possible order; the shared runtime cannot be placed after it safely.");
+        int effectiveOrder = Math.Max(order, sourceMaxOrder + 1);
+
         List<string> warnings = new();
         HashSet<string> warningKeys = new(StringComparer.OrdinalIgnoreCase);
 
-        Report(progress, 3, "Общий runtime", "Строю эффективный индекс CARD_V2…");
+        Report(progress, 3, "Общий runtime", $"Строю эффективный индекс CARD_V2; WAD order {effectiveOrder} (исходный максимум {sourceMaxOrder})…");
         WorkspaceCardIndex cardIndex = WorkspaceCardIndex.Create(scan);
         WorkspaceContentVariant[] effectiveCards = scan.CardVariants
             .Where(variant => !string.IsNullOrWhiteSpace(variant.Reference))
@@ -230,24 +235,26 @@ public sealed class WorkspaceAllCardRuntimeBuilder
                     "The workspace runtime index is inconsistent; packaging was stopped.");
             }
 
-            Report(progress, 78, "Сборка общего Runtime WAD", $"Упаковываю {sortedRuntimePaths.Length:N0} ресурсов…");
+            Report(progress, 78, "Сборка общего Runtime WAD", $"Упаковываю {sortedRuntimePaths.Length:N0} ресурсов с order {effectiveOrder}…");
             UnpackedContentBuildResult wadResult = _wadBuilder.Build(
                 new UnpackedContentBuildOptions(
                     staging,
                     output,
                     UnpackedContentKind.PortableCards,
-                    order),
+                    effectiveOrder),
                 cancellationToken);
 
             string manifestPath = output + ".runtime.json";
             Report(progress, 96, "Проверка", "WAD проверен. Записываю состав runtime…");
             File.WriteAllText(manifestPath, JsonSerializer.Serialize(new
             {
-                formatVersion = 2,
+                formatVersion = 3,
                 createdUtc = DateTime.UtcNow,
                 workspace,
                 wad = output,
-                order,
+                requestedOrder = order,
+                sourceMaxOrder,
+                order = effectiveOrder,
                 cardRootCount = effectiveCards.Length,
                 sharedRuntimeTrees = SharedRuntimeTrees,
                 sharedRuntimeResourceCount = sharedRuntimePaths.Count,
@@ -258,7 +265,7 @@ public sealed class WorkspaceAllCardRuntimeBuilder
                 warnings
             }, JsonOptions));
 
-            Report(progress, 100, "Готово", $"Общий runtime: {sortedRuntimePaths.Length:N0} ресурсов для {effectiveCards.Length:N0} CARD_V2.");
+            Report(progress, 100, "Готово", $"Общий runtime: {sortedRuntimePaths.Length:N0} ресурсов для {effectiveCards.Length:N0} CARD_V2; order {effectiveOrder}.");
             return new WorkspaceAllCardRuntimeBuildResult(
                 output,
                 manifestPath,
@@ -273,6 +280,37 @@ public sealed class WorkspaceAllCardRuntimeBuilder
             if (Directory.Exists(staging))
                 Directory.Delete(staging, recursive: true);
         }
+    }
+
+    private static int FindHighestWorkspaceWadOrder(string workspace, CancellationToken cancellationToken)
+    {
+        int maxOrder = -1;
+        string[] manifests = Directory.EnumerateFiles(
+                workspace,
+                GameVersionPackageService.ManifestFileName,
+                SearchOption.AllDirectories)
+            .OrderBy(path => Path.GetDirectoryName(path), StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        GameVersionPackageService packageService = new();
+        foreach (string manifestPath in manifests)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            DotpVersionPackageManifest manifest;
+            try
+            {
+                manifest = packageService.ReadManifest(Path.GetDirectoryName(manifestPath)!);
+            }
+            catch
+            {
+                continue;
+            }
+
+            foreach (DotpWadPackageManifest wad in manifest.Wads)
+                maxOrder = Math.Max(maxOrder, wad.PrimaryOrder);
+        }
+
+        return maxOrder;
     }
 
     private static HashSet<string> LoadSharedRuntimePaths(
