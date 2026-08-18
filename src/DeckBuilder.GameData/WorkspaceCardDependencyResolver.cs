@@ -67,6 +67,13 @@ internal static class WorkspaceCardDependencyResolver
             foreach (Match match in TokenRegex.Matches(payload))
             {
                 string candidate = match.Value;
+
+                // CARD_V2 filenames and CW/RSN logical token ids are conventionally uppercase.
+                // Lower-case values such as token_count, token_size and token_chest are helper
+                // variables/parameters used by card scripts and must not be reported as missing cards.
+                if (!candidate.StartsWith("TOKEN_", StringComparison.Ordinal))
+                    continue;
+
                 if (IgnoredTokenIdentifiers.Contains(candidate)
                     || candidate.Equals(currentReference, StringComparison.OrdinalIgnoreCase)
                     || IsSelfAlias(candidate, currentReference)
