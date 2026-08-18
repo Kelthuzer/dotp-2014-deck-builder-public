@@ -152,7 +152,14 @@ public partial class MainWindow
             selections = resolver.Selections;
         }
 
-        string outputDirectory = Path.GetDirectoryName(wizard.OutputPath)!;
+        string fallbackOutputDirectory = Path.GetDirectoryName(wizard.OutputPath)
+            ?? _gameDirectory
+            ?? Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        string outputDirectory = ConfiguredWadOutputDirectory(fallbackOutputDirectory);
+        string deckWadPath = Path.Combine(outputDirectory, Path.GetFileName(wizard.OutputPath));
+        AppSettingsService.Current.WadOutputDirectory = outputDirectory;
+        AppSettingsService.Save();
+
         string codeName = SanitizeWadCodeName(wizard.DeckName);
         string supportWadPath = Path.Combine(
             outputDirectory,
@@ -169,7 +176,7 @@ public partial class MainWindow
             $"Основная колода: {_deck.MainDeckCardCount} карт\n" +
             $"Исходных CARD_V2 (колода + unlocks + land pool): {usedReferences.Length}\n" +
             $"Конфликтов вариантов: {relevantConflicts.Length}\n\n" +
-            $"Deck WAD:\n{wizard.OutputPath}\n\n" +
+            $"Deck WAD:\n{deckWadPath}\n\n" +
             $"Cards/art/runtime WAD:\n{supportWadPath}\n\n" +
             $"CPE блока {wizard.IdBlock} будет создан/проверен автоматически.",
             "Подтверждение полной упаковки",
@@ -177,6 +184,12 @@ public partial class MainWindow
             MessageBoxImage.Question);
         if (confirmation != MessageBoxResult.Yes)
             return;
+
+        DeckBuildProgressWindow progressWindow = new() { Owner = this };
+        IProgress<WorkspaceSelectedCardsProgress> buildProgress =
+            new Progress<WorkspaceSelectedCardsProgress>(progressWindow.Report);
+        progressWindow.Show();
+        progressWindow.SetProgress(1, "Подготовка", "Создаю временное окружение сборки…");
 
         Cursor = Cursors.Wait;
         string? generatedCoverTdx = null;
@@ -188,6 +201,7 @@ public partial class MainWindow
 
             if (!string.IsNullOrWhiteSpace(wizard.CustomCoverSourcePath))
             {
+                progressWindow.SetProgress(3, "Обложка", "Готовлю пользовательскую обложку в формате TDX…");
                 generatedCoverTdx = Path.Combine(
                     Path.GetTempPath(),
                     $"{wizard.DeckBoxImage}_{Guid.NewGuid():N}.TDX");
@@ -210,18 +224,24 @@ public partial class MainWindow
                 deckBoxImageId: wizard.DeckBoxImage,
                 deckBoxTexturePath: generatedCoverTdx,
                 runtimeRootIdentifiers: GetAdditionalPortableRuntimeRoots(),
-                order: 50);
+                order: 50,
+                cancellationToken: progressWindow.CancellationToken,
+                progress: buildProgress);
 
+            progressWindow.CancellationToken.ThrowIfCancellationRequested();
+            progressWindow.SetProgress(96, "Deck WAD", "Собираю описание колоды, unlocks и Content Pack Enabler…");
             Status("Упаковка: собираю Deck WAD и Content Pack Enabler…");
             ModernWadExportOptions options = new(
-                wizard.OutputPath,
+                deckWadPath,
                 wizard.Slot,
                 wizard.DeckName,
                 wizard.Description,
                 wizard.IdBlock);
             ModernWadExportResult result = await Task.Run(() =>
-                ModernWadExporter.Export(_deck, packagingCatalog, options));
+                ModernWadExporter.Export(_deck, packagingCatalog, options),
+                progressWindow.CancellationToken);
 
+            progressWindow.SetProgress(99, "Финальная проверка", "Проверяю итоговые пути и завершаю комплект…");
             _deck.Uid = result.DeckUid;
             _deck.ContentPack = wizard.IdBlock;
             SetDirty(true);
@@ -233,6 +253,10 @@ public partial class MainWindow
             string enablerText = result.ContentPackEnablerCreated
                 ? $"Создан CPE:\n{result.ContentPackEnablerPath}"
                 : $"CPE уже существует:\n{result.ContentPackEnablerPath}";
+
+            progressWindow.SetProgress(100, "Готово", "Deck WAD, Cards/runtime WAD и CPE собраны.");
+            progressWindow.MarkCompleted();
+            progressWindow.Close();
 
             MessageBox.Show(this,
                 $"Полный комплект колоды собран.\n\n" +
@@ -253,8 +277,21 @@ public partial class MainWindow
                 $"{support.ArtCount} illustrations + {support.RuntimeResourceCount} runtime resources + " +
                 $"{coverMode} deck cover {wizard.DeckBoxImage} + CPE {wizard.IdBlock}.");
         }
+        catch (OperationCanceledException)
+        {
+            Status("Упаковка колоды отменена пользователем.");
+            progressWindow.MarkCompleted();
+            progressWindow.Close();
+            MessageBox.Show(this,
+                "Сборка отменена. Временные файлы очищены; готовые WAD не заменялись незавершёнными файлами.",
+                "Упаковка отменена",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
         catch (Exception exception)
         {
+            progressWindow.MarkCompleted();
+            progressWindow.Close();
             ShowError("Не удалось собрать полный комплект колоды", exception);
         }
         finally
@@ -269,6 +306,12 @@ public partial class MainWindow
                 {
                     // Temporary cover cleanup must not hide the packaging result/error.
                 }
+            }
+
+            if (progressWindow.IsVisible)
+            {
+                progressWindow.MarkCompleted();
+                progressWindow.Close();
             }
             Cursor = null;
         }
@@ -315,11 +358,11 @@ public partial class MainWindow
             return true;
         }
 
-        string remembered = AppSettingsService.Current.LastWorkspaceDirectory;
-        if (!string.IsNullOrWhiteSpace(remembered) && Directory.Exists(remembered))
+        string configured = AppSettingsService.Current.WorkspaceDirectory;
+        if (!string.IsNullOrWhiteSpace(configured) && Directory.Exists(configured))
         {
-            Status($"Упаковка: восстанавливаю workspace {remembered}…");
-            await LoadWorkspaceAsync(remembered);
+            Status($"Упаковка: загружаю workspace из настроек {configured}…");
+            await LoadWorkspaceAsync(configured);
             if (!string.IsNullOrWhiteSpace(_workspaceDirectory)
                 && Directory.Exists(_workspaceDirectory)
                 && _workspaceCardVariants is not null)
@@ -331,7 +374,7 @@ public partial class MainWindow
 
         MessageBox.Show(this,
             "Для полной упаковки нужен распакованный workspace с CARD_V2 и всеми runtime-ресурсами карт.\n\n" +
-            "Выберите корневую папку workspace. Билдер запомнит её и в следующий раз подхватит автоматически.",
+            "Укажите его в Файл → Settings → «Распакованный workspace» или выберите папку сейчас.",
             "Нужен workspace",
             MessageBoxButton.OK,
             MessageBoxImage.Information);
@@ -340,7 +383,7 @@ public partial class MainWindow
         {
             Title = "Выберите распакованный workspace Magic 2014",
             Multiselect = false,
-            InitialDirectory = Directory.Exists(remembered) ? remembered : null
+            InitialDirectory = Directory.Exists(configured) ? configured : null
         };
         if (dialog.ShowDialog(this) != true)
         {
@@ -367,7 +410,7 @@ public partial class MainWindow
 
     private static void RememberPackagingWorkspace(string path)
     {
-        AppSettingsService.Current.LastWorkspaceDirectory = Path.GetFullPath(path);
+        AppSettingsService.Current.WorkspaceDirectory = Path.GetFullPath(path);
         AppSettingsService.Save();
     }
 }
