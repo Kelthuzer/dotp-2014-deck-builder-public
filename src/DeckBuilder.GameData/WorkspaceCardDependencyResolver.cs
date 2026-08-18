@@ -22,16 +22,17 @@ internal static class WorkspaceCardDependencyResolver
         @"(?<![A-Za-z0-9_])TOKEN_[A-Za-z0-9_]+(?![A-Za-z0-9_])",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
-    // Community WAD's CW_TOKENS.LOL uses logical token keys such as
-    // TOKEN_CONSTRUCT_AC_6_12_C_T_CW_1. Those keys encode token parameters and the selected art
-    // variant; they are not necessarily CARD_V2 filenames. If no exact CARD_V2 exists, the shared
-    // CW runtime resolves the key dynamically, so reporting it as a missing card is a false alarm.
+    // CW_TOKENS.LOL constructs names such as TOKEN_*_CW_1 at runtime. A bare generated-looking
+    // identifier in script text is therefore not enough by itself to report a missing dependency.
+    // Explicit <TOKEN_REGISTRATION type="..."/> entries are different: DotP passes that concrete
+    // CARD_V2 filename to PutTokensOntoBattlefield, so registrations are handled as mandatory card
+    // dependencies before this generic suppression is applied.
     private static readonly Regex CommunityDynamicTokenRegex = new(
         @"^TOKEN_[A-Za-z0-9_]+_CW_[0-9]+$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     // These are XML/schema identifiers, not CARD_V2 FILENAME references. In particular,
-    // TOKEN_REGISTRATION appears in ordinary definitions and must never be reported as a token.
+    // TOKEN_REGISTRATION appears in ordinary definitions and must never itself be reported as a token.
     private static readonly HashSet<string> IgnoredTokenIdentifiers = new(StringComparer.OrdinalIgnoreCase)
     {
         "TOKEN_REGISTRATION"
@@ -47,6 +48,23 @@ internal static class WorkspaceCardDependencyResolver
 
         HashSet<string> references = new(StringComparer.OrdinalIgnoreCase);
         HashSet<string> missingTokens = new(StringComparer.OrdinalIgnoreCase);
+
+        // TOKEN_REGISTRATION is the engine's explicit declaration of a concrete token CARD_V2 that
+        // may be instantiated by this card. Do not classify *_CW_N registrations as merely dynamic:
+        // CW_Tokens ultimately calls PutTokensOntoBattlefield with exactly this generated filename.
+        foreach (string registeredToken in ExtractRegisteredTokenReferences(xml))
+        {
+            if (registeredToken.Equals(currentReference, StringComparison.OrdinalIgnoreCase)
+                || IsSelfAlias(registeredToken, currentReference))
+            {
+                continue;
+            }
+
+            if (TryResolveReferenceAlias(registeredToken, referenceAliases, out string canonicalReference))
+                references.Add(canonicalReference);
+            else if (registeredToken.StartsWith("TOKEN_", StringComparison.Ordinal))
+                missingTokens.Add(registeredToken);
+        }
 
         // Scan XML payload values rather than element/attribute names. Schema names such as
         // TOKEN_REGISTRATION describe the card format; only values/text can name another card.
@@ -136,6 +154,32 @@ internal static class WorkspaceCardDependencyResolver
         // RSN_TOKEN_MANA_G -> TOKEN_MANA_G. This is not a dependency on a second CARD_V2.
         return currentReference.StartsWith("RSN_", StringComparison.OrdinalIgnoreCase)
             && candidate.Equals(currentReference[4..], StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static IEnumerable<string> ExtractRegisteredTokenReferences(string xml)
+    {
+        XDocument? document = null;
+        try
+        {
+            document = XDocument.Parse(xml, LoadOptions.PreserveWhitespace);
+        }
+        catch
+        {
+            // The generic raw scanner below remains available for malformed legacy XML.
+        }
+
+        if (document is null)
+            yield break;
+
+        foreach (XElement registration in document.Descendants().Where(element =>
+                     element.Name.LocalName.Equals("TOKEN_REGISTRATION", StringComparison.OrdinalIgnoreCase)))
+        {
+            string type = registration.Attributes()
+                .FirstOrDefault(attribute => attribute.Name.LocalName.Equals("type", StringComparison.OrdinalIgnoreCase))
+                ?.Value.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(type))
+                yield return type;
+        }
     }
 
     private static IEnumerable<string> ExtractPayloadValues(string xml)
