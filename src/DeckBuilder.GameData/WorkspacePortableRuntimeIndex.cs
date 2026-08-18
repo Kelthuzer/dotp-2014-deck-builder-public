@@ -27,15 +27,17 @@ internal sealed record WorkspacePortableRuntimeResolution(
 internal sealed class WorkspacePortableRuntimeIndex
 {
     private const int MaxRuntimeDiscoveredCardReferences = 128;
+    private const int MaxSelectedRuntimeResources = 1024;
 
-    // SPECS and permanent text contain small shared tables that are often addressed through generated
-    // ids. FUNCTIONS are deliberately NOT copied wholesale: only functions reachable from a card or
-    // another selected runtime file are included.
-    private static readonly string[] AlwaysIncludeTrees =
+    // Some engine lookups are data-driven and do not name these files directly. Keep only the
+    // small, proven creature-type support bundle implicit. Everything else in SPECS and
+    // TEXT_PERMANENT is dependency-driven; copying those trees wholesale produced >1 GB deck WADs.
+    private static readonly string[] ImplicitSharedResourcePaths =
     {
-        "SPECS",
-        "TEXT_PERMANENT"
+        "SPECS\\CREATURE_TYPES.TXT"
     };
+
+    private const string CreatureTypeTextPrefix = "TEXT_PERMANENT\\CREATURE_TYPE_TEXT_";
 
     // These are game-content roots, not support runtime. CARD_V2 is handled by the card closure;
     // deck/unlock/personality definitions belong to the deck WAD and must never leak in here.
@@ -88,18 +90,18 @@ internal sealed class WorkspacePortableRuntimeIndex
     private readonly IReadOnlyDictionary<string, RuntimeResource> _resourcesByPath;
     private readonly IReadOnlyDictionary<string, RuntimeResource[]> _resourcesByDirectAlias;
     private readonly IReadOnlyDictionary<string, RuntimeResource[]> _resourcesByGlobalAlias;
-    private readonly IReadOnlyList<string> _alwaysIncludedPaths;
+    private readonly IReadOnlyList<string> _implicitSharedPaths;
 
     private WorkspacePortableRuntimeIndex(
         IReadOnlyDictionary<string, RuntimeResource> resourcesByPath,
         IReadOnlyDictionary<string, RuntimeResource[]> resourcesByDirectAlias,
         IReadOnlyDictionary<string, RuntimeResource[]> resourcesByGlobalAlias,
-        IReadOnlyList<string> alwaysIncludedPaths)
+        IReadOnlyList<string> implicitSharedPaths)
     {
         _resourcesByPath = resourcesByPath;
         _resourcesByDirectAlias = resourcesByDirectAlias;
         _resourcesByGlobalAlias = resourcesByGlobalAlias;
-        _alwaysIncludedPaths = alwaysIncludedPaths;
+        _implicitSharedPaths = implicitSharedPaths;
     }
 
     public bool IsEmpty => _resourcesByPath.Count == 0;
@@ -193,8 +195,8 @@ internal sealed class WorkspacePortableRuntimeIndex
             resource => resource.RelativePath,
             StringComparer.OrdinalIgnoreCase);
         RuntimeAliasIndexes aliasIndexes = BuildAliasIndexes(effective);
-        string[] alwaysIncludedPaths = effective
-            .Where(resource => AlwaysIncludeTrees.Any(tree => StartsWithTree(resource.RelativePath, tree)))
+        string[] implicitSharedPaths = effective
+            .Where(resource => IsImplicitSharedResource(resource.RelativePath))
             .Select(resource => resource.RelativePath)
             .ToArray();
 
@@ -202,7 +204,7 @@ internal sealed class WorkspacePortableRuntimeIndex
             resourcesByPath,
             aliasIndexes.Direct,
             aliasIndexes.Globals,
-            alwaysIncludedPaths);
+            implicitSharedPaths);
     }
 
     public WorkspacePortableRuntimeResolution Resolve(
@@ -221,7 +223,13 @@ internal sealed class WorkspacePortableRuntimeIndex
         if (IsEmpty)
             return WorkspacePortableRuntimeResolution.Empty;
 
-        HashSet<string> selectedPaths = _alwaysIncludedPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        HashSet<string> selectedPaths = _implicitSharedPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (selectedPaths.Count > MaxSelectedRuntimeResources)
+        {
+            throw new InvalidDataException(
+                $"The implicit portable runtime contains {selectedPaths.Count:N0} resources, exceeding the safety limit of {MaxSelectedRuntimeResources:N0}.");
+        }
+
         HashSet<string> cardReferences = new(StringComparer.OrdinalIgnoreCase);
         HashSet<string> missingRoots = new(StringComparer.OrdinalIgnoreCase);
         HashSet<string> scannedTextFiles = new(StringComparer.OrdinalIgnoreCase);
@@ -230,7 +238,16 @@ internal sealed class WorkspacePortableRuntimeIndex
 
         void Select(RuntimeResource resource)
         {
-            selectedPaths.Add(resource.RelativePath);
+            if (!selectedPaths.Add(resource.RelativePath))
+                return;
+
+            if (selectedPaths.Count > MaxSelectedRuntimeResources)
+            {
+                throw new InvalidDataException(
+                    $"Portable runtime dependency closure exceeded {MaxSelectedRuntimeResources:N0} resources while adding {resource.RelativePath}. " +
+                    "Packaging was stopped before producing an oversized WAD; inspect the dependency chain instead of copying an entire runtime tree.");
+            }
+
             if (IsTextResource(resource) && queuedRuntimePaths.Add(resource.RelativePath))
                 pendingText.Enqueue(resource);
         }
@@ -548,6 +565,14 @@ internal sealed class WorkspacePortableRuntimeIndex
 
     private static bool IsAllowedRuntimeResource(string relativePath) =>
         !ForbiddenTrees.Any(tree => StartsWithTree(relativePath, tree));
+
+    private static bool IsImplicitSharedResource(string relativePath)
+    {
+        if (ImplicitSharedResourcePaths.Any(path => relativePath.Equals(path, StringComparison.OrdinalIgnoreCase)))
+            return true;
+
+        return relativePath.StartsWith(CreatureTypeTextPrefix, StringComparison.OrdinalIgnoreCase);
+    }
 
     private static bool StartsWithTree(string path, string tree) =>
         path.Equals(tree, StringComparison.OrdinalIgnoreCase)
