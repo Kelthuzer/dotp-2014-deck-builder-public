@@ -45,6 +45,8 @@ internal static class AppSettingsService
         // Keep old builds and the legacy MainWindow loader compatible while paths migrate to settings.json.
         if (!string.IsNullOrWhiteSpace(Current.GameDirectory))
             File.WriteAllText(LegacyGameDirectoryPath, Current.GameDirectory);
+        else if (File.Exists(LegacyGameDirectoryPath))
+            File.Delete(LegacyGameDirectoryPath);
     }
 
     private static ModernAppSettings Load()
