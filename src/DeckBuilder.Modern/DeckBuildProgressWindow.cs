@@ -87,8 +87,16 @@ internal sealed class DeckBuildProgressWindow : Window
         AppThemeService.ApplyCurrent();
     }
 
-    public void Report(WorkspaceSelectedCardsProgress value) =>
+    public void Report(WorkspaceSelectedCardsProgress value)
+    {
+        if (value.Stage.Equals("Сборка Cards/runtime WAD", StringComparison.OrdinalIgnoreCase))
+        {
+            SetIndeterminate(value.Stage, value.Detail + " Файлы сжимаются и сразу проверяются.");
+            return;
+        }
+
         SetProgress(value.Percent, value.Stage, value.Detail);
+    }
 
     public void SetProgress(int percent, string stage, string detail)
     {
