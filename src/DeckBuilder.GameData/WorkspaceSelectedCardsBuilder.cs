@@ -22,6 +22,11 @@ public sealed record WorkspaceSelectedCardsBuildResult(
     UnpackedContentBuildResult BuildResult,
     IReadOnlyList<string> Warnings);
 
+public sealed record WorkspaceSelectedCardsProgress(
+    int Percent,
+    string Stage,
+    string Detail);
+
 /// <summary>
 /// Builds the support WAD that makes a deck portable: selected CARD_V2 files, recursive card/token
 /// dependencies, their illustrations, and the shared runtime/resources reached by those cards.
@@ -41,7 +46,8 @@ public sealed class WorkspaceSelectedCardsBuilder
         string? deckBoxTexturePath = null,
         IEnumerable<string>? runtimeRootIdentifiers = null,
         int order = 50,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IProgress<WorkspaceSelectedCardsProgress>? progress = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(outputPath);
         ArgumentNullException.ThrowIfNull(references);
@@ -59,7 +65,8 @@ public sealed class WorkspaceSelectedCardsBuilder
                 deckBoxTexturePath,
                 runtimeRootIdentifiers,
                 order,
-                cancellationToken),
+                cancellationToken,
+                progress),
             cancellationToken);
     }
 
@@ -73,8 +80,10 @@ public sealed class WorkspaceSelectedCardsBuilder
         string? deckBoxTexturePath,
         IEnumerable<string>? runtimeRootIdentifiers,
         int order,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IProgress<WorkspaceSelectedCardsProgress>? progress = null)
     {
+        Report(progress, 2, "Подготовка", "Проверяю список карт и папку назначения…");
         string[] rootReferences = NormalizeReferences(references);
         if (rootReferences.Length == 0)
             throw new InvalidDataException("No CARD_V2 references were supplied for portable packaging.");
@@ -84,15 +93,20 @@ public sealed class WorkspaceSelectedCardsBuilder
             ?? throw new DirectoryNotFoundException("The support WAD output directory is missing.");
         Directory.CreateDirectory(outputDirectory);
 
+        cancellationToken.ThrowIfCancellationRequested();
+        Report(progress, 7, "Индекс карт", $"Индексирую CARD_V2: {scan.CardVariants.Count:N0} вариантов…");
         WorkspaceCardIndex cardIndex = WorkspaceCardIndex.Create(scan);
         HashSet<string> rootReferenceSet = rootReferences.ToHashSet(StringComparer.OrdinalIgnoreCase);
         List<string> warnings = new();
         HashSet<string> warningKeys = new(StringComparer.OrdinalIgnoreCase);
+
+        Report(progress, 12, "Индекс runtime", "Читаю FUNCTIONS, SPECS, TEXT и связанные ресурсы workspace…");
         WorkspacePortableRuntimeIndex runtimeIndex = WorkspacePortableRuntimeIndex.Load(
             workspaceDirectory,
             warnings,
             warningKeys,
             cancellationToken);
+        Report(progress, 22, "Индекс runtime", "Runtime-индекс готов. Начинаю замыкание зависимостей карт…");
 
         string? requiredDeckTexture = BuildDeckTextureResourcePath(deckBoxImageId, deckBoxTexturePath);
         string[] runtimeRoots = (runtimeRootIdentifiers ?? Array.Empty<string>())
@@ -131,11 +145,21 @@ public sealed class WorkspaceSelectedCardsBuilder
                 QueueCard(reference, null);
 
             WorkspacePortableRuntimeResolution runtime = WorkspacePortableRuntimeResolution.Empty;
+            int closurePass = 0;
             while (true)
             {
+                closurePass++;
                 while (pendingCards.TryDequeue(out CardRequest? request))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    int knownTotal = Math.Max(scheduledReferences.Count, rootReferences.Length);
+                    int cardPercent = 24 + Math.Min(22, (int)Math.Round(22d * sources.Count / Math.Max(1, knownTotal)));
+                    Report(
+                        progress,
+                        cardPercent,
+                        "Карты и токены",
+                        $"{sources.Count:N0}/{knownTotal:N0}: {request.Reference}");
+
                     if (!cardIndex.TryResolve(request.Reference, selections, out WorkspaceContentVariant selected))
                     {
                         Warn(
@@ -189,6 +213,12 @@ public sealed class WorkspaceSelectedCardsBuilder
                         QueueCard(dependency, canonicalReference);
                 }
 
+                Report(
+                    progress,
+                    49,
+                    "Runtime-зависимости",
+                    $"Проход {closurePass}: анализирую {cardXmlPaths.Count:N0} CARD_V2 и общие функции…");
+
                 // Runtime may name another CARD_V2 by FILENAME, ARTID or MULTIVERSEID. Re-resolve
                 // only after the card queue is empty; the expensive workspace index is reused.
                 runtime = runtimeIndex.Resolve(
@@ -209,10 +239,18 @@ public sealed class WorkspaceSelectedCardsBuilder
                     }
                 }
 
+                Report(
+                    progress,
+                    58,
+                    "Runtime-зависимости",
+                    $"Найдено runtime-ресурсов: {runtime.ResourceCount:N0}; CARD_V2 через runtime: {runtime.CardReferences.Count:N0}.");
+
                 if (!addedRuntimeCard)
                     break;
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
+            Report(progress, 63, "Подготовка runtime", $"Копирую {runtime.ResourceCount:N0} необходимых runtime-ресурсов…");
             ValidateRequiredRuntimeRoots(requiredDeckTexture, runtime, warnings, warningKeys);
             runtimeIndex.CopyIntoStaging(staging, runtime, cancellationToken);
             StageCustomDeckTexture(staging, deckBoxImageId, deckBoxTexturePath);
@@ -221,6 +259,12 @@ public sealed class WorkspaceSelectedCardsBuilder
             if (packagedRootCards == 0)
                 throw new InvalidDataException("None of the deck's CARD_V2 definitions could be packaged.");
 
+            cancellationToken.ThrowIfCancellationRequested();
+            Report(
+                progress,
+                72,
+                "Сборка Cards/runtime WAD",
+                $"Упаковываю {sources.Count:N0} CARD_V2, {copiedArt.Count:N0} иллюстраций и {runtime.ResourceCount:N0} runtime-ресурсов…");
             UnpackedContentBuildResult wadResult = _wadBuilder.Build(
                 new UnpackedContentBuildOptions(
                     staging,
@@ -229,6 +273,7 @@ public sealed class WorkspaceSelectedCardsBuilder
                     order),
                 cancellationToken);
 
+            Report(progress, 92, "Проверка Cards/runtime WAD", $"WAD собран: {wadResult.FileCount:N0} файлов. Записываю provenance…");
             int sharedFunctionCount = runtime.ResourceCounts.TryGetValue("FUNCTIONS", out int functionCount)
                 ? functionCount
                 : 0;
@@ -252,6 +297,7 @@ public sealed class WorkspaceSelectedCardsBuilder
                 cards = sources
             }, JsonOptions));
 
+            Report(progress, 95, "Cards/runtime WAD готов", $"{wadResult.FileCount:N0} файлов проверено; перехожу к Deck WAD и CPE.");
             return new WorkspaceSelectedCardsBuildResult(
                 output,
                 sourcesPath,
@@ -267,6 +313,13 @@ public sealed class WorkspaceSelectedCardsBuilder
                 Directory.Delete(staging, recursive: true);
         }
     }
+
+    private static void Report(
+        IProgress<WorkspaceSelectedCardsProgress>? progress,
+        int percent,
+        string stage,
+        string detail) =>
+        progress?.Report(new WorkspaceSelectedCardsProgress(Math.Clamp(percent, 0, 100), stage, detail));
 
     private static string[] NormalizeReferences(IEnumerable<string> references) =>
         references
