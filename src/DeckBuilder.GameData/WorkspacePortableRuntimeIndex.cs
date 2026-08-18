@@ -19,24 +19,15 @@ internal sealed record WorkspacePortableRuntimeResolution(
 
 /// <summary>
 /// Immutable index of the effective DATA_ALL_PLATFORMS runtime in an extracted workspace.
-///
-/// Runtime names have three different meanings and must not share one flat alias table:
-///  - concrete files (TEXTURES\\FOO.TDX, SPECS\\BAR.TXT),
-///  - declared LOL functions,
-///  - LOL global symbols/constants.
-///
-/// Keeping those namespaces separate is essential. Treating every bare word in CARD_V2/LOL text as
-/// a possible file basename caused unrelated animation binaries and textures to become dependencies,
-/// eventually turning a small portable deck into a gigabyte-scale WAD.
+/// Concrete files, declared LOL functions and LOL globals are separate namespaces. A bare word in
+/// CARD_V2/LOL code is never treated as an arbitrary file basename; doing that pulled unrelated
+/// animation binaries and textures into portable decks and produced gigabyte-scale WADs.
 /// </summary>
 internal sealed class WorkspacePortableRuntimeIndex
 {
     private const int MaxRuntimeDiscoveredCardReferences = 128;
     private const int MaxSelectedRuntimeResources = 1024;
 
-    // Creature type selection is an engine/data-driven lookup and does not name these files directly.
-    // Keep only this small compatibility bundle implicit. All other SPECS/TEXT resources are selected
-    // through actual references.
     private static readonly string[] ImplicitSharedResourcePaths =
     {
         "SPECS\\CREATURE_TYPES.TXT"
@@ -81,6 +72,10 @@ internal sealed class WorkspacePortableRuntimeIndex
 
     private static readonly Regex LuaGlobalAssignmentRegex = new(
         @"(?m)^\s*([A-Za-z_][A-Za-z0-9_.:]*)\s*=",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex RuntimeResourceAssignmentRegex = new(
+        @"(?im)\b[A-Za-z_][A-Za-z0-9_.:]*(?:TEXTURE|IMAGE|FRAME|MANA|EFFECT|ASSET|FRONTEND|SPEC|TEXT)[A-Za-z0-9_.:]*\s*=\s*[""']?([A-Za-z0-9_.:-]+)",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static readonly Regex RuntimeCardAssignmentRegex = new(
@@ -153,10 +148,7 @@ internal sealed class WorkspacePortableRuntimeIndex
             }
             catch (Exception exception)
             {
-                AddWarning(
-                    warnings,
-                    warningKeys,
-                    $"Could not read runtime manifest {manifestPath}: {exception.Message}");
+                AddWarning(warnings, warningKeys, $"Could not read runtime manifest {manifestPath}: {exception.Message}");
                 continue;
             }
 
@@ -170,9 +162,7 @@ internal sealed class WorkspacePortableRuntimeIndex
                     if (relativePath is null || !IsAllowedRuntimeResource(relativePath))
                         continue;
 
-                    string storagePath = Path.Combine(
-                        wadDirectory,
-                        file.StoragePath.Replace('/', Path.DirectorySeparatorChar));
+                    string storagePath = Path.Combine(wadDirectory, file.StoragePath.Replace('/', Path.DirectorySeparatorChar));
                     if (!File.Exists(storagePath))
                     {
                         AddWarning(
@@ -236,11 +226,6 @@ internal sealed class WorkspacePortableRuntimeIndex
             return WorkspacePortableRuntimeResolution.Empty;
 
         HashSet<string> selectedPaths = _implicitSharedPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        Dictionary<string, string> selectedBy = selectedPaths.ToDictionary(
-            path => path,
-            _ => "implicit creature-type compatibility bundle",
-            StringComparer.OrdinalIgnoreCase);
-
         if (selectedPaths.Count > MaxSelectedRuntimeResources)
         {
             throw new InvalidDataException(
@@ -258,7 +243,6 @@ internal sealed class WorkspacePortableRuntimeIndex
             if (!selectedPaths.Add(resource.RelativePath))
                 return;
 
-            selectedBy[resource.RelativePath] = reason;
             if (selectedPaths.Count > MaxSelectedRuntimeResources)
             {
                 throw new InvalidDataException(
@@ -387,8 +371,6 @@ internal sealed class WorkspacePortableRuntimeIndex
         if (discoverCardReferences)
             ScanRuntimeCardReferences(text, cardAliases, cardReferences);
 
-        // Bare identifiers are code symbols, not arbitrary file names. Resolve them only against
-        // declared functions and (after a function is reachable) LOL globals/constants.
         foreach (Match match in IdentifierRegex.Matches(text))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -397,14 +379,20 @@ internal sealed class WorkspacePortableRuntimeIndex
                 selectResource(resource, $"{sourceLabel} -> symbol '{token}'");
         }
 
-        // Concrete assets/tables must be expressed as a quoted value or an actual path. A bare word
-        // like GARRUK_BG must not silently resolve to ANIMATIONBINARIES\\GARRUK_BG.BIN.
         foreach (Match match in QuotedValueRegex.Matches(text))
         {
             cancellationToken.ThrowIfCancellationRequested();
             string token = match.Groups[1].Value.Trim();
             if (TryResolveConcreteReference(token, allowBareSymbolicAsset: true, out RuntimeResource resource))
                 selectResource(resource, $"{sourceLabel} -> quoted resource '{token}'");
+        }
+
+        foreach (Match match in RuntimeResourceAssignmentRegex.Matches(text))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string token = match.Groups[1].Value.Trim();
+            if (TryResolveConcreteReference(token, allowBareSymbolicAsset: true, out RuntimeResource resource))
+                selectResource(resource, $"{sourceLabel} -> resource assignment '{token}'");
         }
 
         foreach (Match match in PathReferenceRegex.Matches(text))
@@ -465,10 +453,7 @@ internal sealed class WorkspacePortableRuntimeIndex
         return false;
     }
 
-    private bool TryResolveConcreteReference(
-        string token,
-        bool allowBareSymbolicAsset,
-        out RuntimeResource resource)
+    private bool TryResolveConcreteReference(string token, bool allowBareSymbolicAsset, out RuntimeResource resource)
     {
         bool explicitReference = IsExplicitResourceReference(token);
         foreach (string alias in EnumerateTokenAliases(token))
