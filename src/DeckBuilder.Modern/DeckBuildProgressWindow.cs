@@ -106,7 +106,8 @@ internal sealed class DeckBuildProgressWindow : Window
             return;
         }
 
-        _lastPercent = Math.Clamp(percent, 0, 100);
+        int bounded = Math.Clamp(percent, 0, 100);
+        _lastPercent = Math.Max(_lastPercent, bounded);
         _progressBar.IsIndeterminate = false;
         _progressBar.Value = _lastPercent;
         _stageText.Text = stage;
