@@ -52,10 +52,16 @@ public partial class MainWindow
         _settingsMenuInstalled = true;
     }
 
-    private void Settings_Click(object sender, RoutedEventArgs e)
+    private async void Settings_Click(object sender, RoutedEventArgs e)
     {
         SettingsWindow dialog = new() { Owner = this };
-        dialog.ShowDialog();
+        bool applied = dialog.ShowDialog() == true;
         AppLocalization.Apply(this);
+        if (!applied)
+            return;
+
+        Status("Применяю пути из настроек…");
+        await ReloadConfiguredDataPathsAsync();
+        Status("Настройки применены.");
     }
 }
