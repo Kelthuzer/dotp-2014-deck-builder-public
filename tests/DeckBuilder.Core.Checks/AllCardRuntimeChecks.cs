@@ -87,7 +87,7 @@ internal static class AllCardRuntimeChecks
                     0,
                     string.Empty,
                     true,
-                    10,
+                    90,
                     0x202,
                     0,
                     "header.xml",
@@ -103,7 +103,7 @@ internal static class AllCardRuntimeChecks
                 "CARDS\\ROOT.XML",
                 "TEST_VERSION",
                 wadName,
-                10,
+                90,
                 Hash(card),
                 card,
                 true,
@@ -158,8 +158,14 @@ internal static class AllCardRuntimeChecks
                 "IDE module files must not be copied into the shared runtime WAD.");
 
             string runtimeManifest = File.ReadAllText(result.ManifestPath);
-            True(runtimeManifest.Contains("\"formatVersion\": 2", StringComparison.Ordinal),
-                "Shared runtime manifest must use format version 2.");
+            True(runtimeManifest.Contains("\"formatVersion\": 3", StringComparison.Ordinal),
+                "Shared runtime manifest must use format version 3.");
+            True(runtimeManifest.Contains("\"requestedOrder\": 40", StringComparison.Ordinal),
+                "Shared runtime manifest must preserve the requested order floor.");
+            True(runtimeManifest.Contains("\"sourceMaxOrder\": 90", StringComparison.Ordinal),
+                "Shared runtime manifest must record the highest source WAD order.");
+            True(runtimeManifest.Contains("\"order\": 91", StringComparison.Ordinal),
+                "Shared runtime must load after every source WAD instead of using a fixed low order.");
             True(runtimeManifest.Contains("TEXT_PERMANENT", StringComparison.Ordinal),
                 "Shared runtime manifest must record the complete permanent-text tree.");
             True(result.RuntimeResourceCounts.TryGetValue("FUNCTIONS", out int functions) && functions == 2,
