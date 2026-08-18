@@ -1,4 +1,3 @@
-using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using DeckBuilder.Core.Models;
@@ -9,13 +8,7 @@ public partial class MainWindow
 {
     private bool _mainDeckColumnsConfigured;
 
-    protected override void OnContentRendered(EventArgs e)
-    {
-        base.OnContentRendered(e);
-        ConfigureMainDeckColumns();
-    }
-
-    private void ConfigureMainDeckColumns()
+    internal void InstallMainDeckGridMetadata()
     {
         if (_mainDeckColumnsConfigured || MainDeckGrid.Columns.Count < 4)
             return;
