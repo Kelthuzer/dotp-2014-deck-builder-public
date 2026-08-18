@@ -29,6 +29,7 @@ public partial class App : Application
             mainWindow.InstallCatalogTokenFilter();
             mainWindow.InstallCatalogSearchAndSort();
             mainWindow.InstallCatalogCostClickFix();
+            mainWindow.InstallMainDeckGridMetadata();
             mainWindow.InstallSettingsMenu();
             mainWindow.InstallCleanupToolsMenu();
             mainWindow.InstallMultiCardPreview();
