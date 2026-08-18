@@ -1,7 +1,7 @@
 <Window x:Class="DeckBuilder.Modern.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Application settings" Width="500" Height="350" MinWidth="460" MinHeight="330"
+        Title="Application settings" Width="760" Height="540" MinWidth="680" MinHeight="500"
         WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip">
   <Grid Margin="18">
     <Grid.RowDefinitions>
@@ -17,7 +17,7 @@
 
     <Grid Grid.Row="1" Margin="0,0,0,12">
       <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="120" />
+        <ColumnDefinition Width="140" />
         <ColumnDefinition Width="*" />
       </Grid.ColumnDefinitions>
       <TextBlock Text="Language" VerticalAlignment="Center" />
@@ -29,7 +29,7 @@
 
     <Grid Grid.Row="2" Margin="0,0,0,12">
       <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="120" />
+        <ColumnDefinition Width="140" />
         <ColumnDefinition Width="*" />
       </Grid.ColumnDefinitions>
       <TextBlock Text="Theme" VerticalAlignment="Center" />
@@ -40,12 +40,40 @@
       </ComboBox>
     </Grid>
 
-    <CheckBox x:Name="SmoothPreviewTransitionsBox" Grid.Row="3" Margin="120,0,0,0"
+    <CheckBox x:Name="SmoothPreviewTransitionsBox" Grid.Row="3" Margin="140,0,0,12"
               Content="Плавная смена превью карт" />
 
-    <TextBlock Grid.Row="4" Margin="0,16,0,12" TextWrapping="Wrap"
-               Foreground="{DynamicResource MutedTextBrush}"
-               Text="Плавная смена превью использует короткое затухание без движения карточек. Настройку можно отключить, если мгновенная смена комфортнее." />
+    <GroupBox Grid.Row="4" Header="Пути к данным и сборке" Padding="12" Margin="0,4,0,12">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="180" />
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+
+        <TextBlock Grid.Row="0" Grid.Column="0" Text="Папка Magic 2014" VerticalAlignment="Center" Margin="0,0,10,10" />
+        <TextBox x:Name="GameDirectoryBox" Grid.Row="0" Grid.Column="1" Margin="0,0,8,10" />
+        <Button Grid.Row="0" Grid.Column="2" Content="Обзор…" MinWidth="88" Margin="0,0,0,10" Click="BrowseGameDirectory_Click" />
+
+        <TextBlock Grid.Row="1" Grid.Column="0" Text="Распакованный workspace" VerticalAlignment="Center" Margin="0,0,10,10" />
+        <TextBox x:Name="WorkspaceDirectoryBox" Grid.Row="1" Grid.Column="1" Margin="0,0,8,10" />
+        <Button Grid.Row="1" Grid.Column="2" Content="Обзор…" MinWidth="88" Margin="0,0,0,10" Click="BrowseWorkspaceDirectory_Click" />
+
+        <TextBlock Grid.Row="2" Grid.Column="0" Text="Папка для готовых WAD" VerticalAlignment="Center" Margin="0,0,10,10" />
+        <TextBox x:Name="WadOutputDirectoryBox" Grid.Row="2" Grid.Column="1" Margin="0,0,8,10" />
+        <Button Grid.Row="2" Grid.Column="2" Content="Обзор…" MinWidth="88" Margin="0,0,0,10" Click="BrowseWadOutputDirectory_Click" />
+
+        <TextBlock Grid.Row="3" Grid.ColumnSpan="3" TextWrapping="Wrap"
+                   Foreground="{DynamicResource MutedTextBrush}"
+                   Text="Эти пути используются как основные: игра — для проверки Deck UID и установленных WAD; workspace — для CARD_V2 и runtime-зависимостей; папка WAD — для Deck WAD, Cards/runtime WAD и CPE." />
+      </Grid>
+    </GroupBox>
 
     <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right">
       <Button Content="Cancel" Width="92" IsCancel="True" />
