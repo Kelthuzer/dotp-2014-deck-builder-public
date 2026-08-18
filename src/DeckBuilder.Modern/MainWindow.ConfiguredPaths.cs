@@ -15,6 +15,8 @@ public partial class MainWindow
         _ = ApplyConfiguredDataPathsAsync();
     }
 
+    internal Task ReloadConfiguredDataPathsAsync() => ApplyConfiguredDataPathsAsync();
+
     private async Task ApplyConfiguredDataPathsAsync()
     {
         string gameDirectory = AppSettingsService.Current.GameDirectory;
