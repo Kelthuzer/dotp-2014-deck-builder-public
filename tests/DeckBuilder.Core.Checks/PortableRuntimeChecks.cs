@@ -15,6 +15,16 @@ internal static class PortableRuntimeChecks
 
     public static void Run()
     {
+        WorkspaceCardDependencyScanResult registrationScan = WorkspaceCardDependencyResolver.Scan(
+            "<CARD_V2><TOKEN_REGISTRATION reservation=\"1\" type=\"TOKEN_HUMAN_SOLDIER_C_1_1_W_CW_8\" /></CARD_V2>",
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            "ROOT_CARD");
+        True(
+            registrationScan.MissingTokenReferences.Contains(
+                "TOKEN_HUMAN_SOLDIER_C_1_1_W_CW_8",
+                StringComparer.OrdinalIgnoreCase),
+            "Explicit TOKEN_REGISTRATION entries must not be suppressed as generic dynamic CW token names.");
+
         string root = Path.Combine(Path.GetTempPath(), $"dotp-portable-runtime-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
         try
