@@ -30,6 +30,7 @@ internal static class AppLocalization
             ["Reload unpacked workspace"] = "Перезагрузить распакованные ресурсы",
             ["WAD Workshop…"] = "Мастерская WAD…",
             ["Build cards/decks from unpacked…"] = "Собрать карты/колоды из распакованных ресурсов…",
+            ["Build all-card runtime WAD…"] = "Собрать общий runtime WAD всех карт…",
             ["Card reference scanner…"] = "Сканер ссылок карт…",
             ["Card editor…"] = "Редактор карты…",
             ["Help"] = "Помощь",
