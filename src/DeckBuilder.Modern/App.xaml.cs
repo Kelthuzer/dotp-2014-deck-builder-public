@@ -37,6 +37,7 @@ public partial class App : Application
             mainWindow.InstallLoadingIndicator();
             mainWindow.InstallInteractionsAndLayoutPersistence();
             mainWindow.InstallPreviewVisibilityGuard();
+            mainWindow.InstallConfiguredDataPaths();
             AppLocalization.Apply(mainWindow);
             AppThemeService.ApplyCurrent();
             mainWindow.UpdateDeckAssistantDashboard();
