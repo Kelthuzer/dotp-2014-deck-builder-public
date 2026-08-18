@@ -96,7 +96,7 @@ public sealed class UnpackedContentWadBuilder
         {
             WriteWad(temporaryPath, header, payloads, cancellationToken);
             ValidateWad(temporaryPath, payloads, cancellationToken);
-            File.Move(temporaryPath, outputPath, overwrite: true);
+            CommitValidatedWad(temporaryPath, outputPath);
         }
         finally
         {
@@ -111,6 +111,39 @@ public sealed class UnpackedContentWadBuilder
             collection.Content.Values.Sum(payload => new FileInfo(payload.Path).Length),
             collection.OverrideCount,
             collection.UsedVersionManifest);
+    }
+
+    private static void CommitValidatedWad(string temporaryPath, string outputPath)
+    {
+        if (!File.Exists(outputPath))
+        {
+            File.Move(temporaryPath, outputPath);
+            return;
+        }
+
+        // Do not replace the directory entry when rebuilding an existing WAD. The user's active
+        // game-root WAD can be a hardlink to the copy in MyDecks; File.Move(..., overwrite:true)
+        // would detach that hardlink and leave the game loading the previous file object forever.
+        // The temporary WAD has already passed full payload validation, so copy its bytes into the
+        // existing file object in one non-cancellable commit phase. All hardlink names then observe
+        // the rebuilt WAD immediately.
+        using FileStream source = new(
+            temporaryPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            bufferSize: 1024 * 1024,
+            FileOptions.SequentialScan);
+        using FileStream destination = new(
+            outputPath,
+            FileMode.Create,
+            FileAccess.Write,
+            FileShare.Read,
+            bufferSize: 1024 * 1024,
+            FileOptions.SequentialScan);
+        source.CopyTo(destination, 1024 * 1024);
+        destination.Flush(flushToDisk: true);
+        File.Delete(temporaryPath);
     }
 
     private static ContentCollection CollectContent(
