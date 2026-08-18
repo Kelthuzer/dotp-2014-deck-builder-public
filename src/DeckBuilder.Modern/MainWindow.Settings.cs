@@ -16,7 +16,7 @@ public partial class MainWindow
         if (menu is null)
             return;
 
-        RemoveLegacyPathMenuItems(menu);
+        RemovePathSelectionMenuItems(menu);
 
         MenuItem? fileMenu = FindTopLevelMenu(menu, "File", "Файл");
         if (fileMenu is null)
@@ -53,22 +53,18 @@ public partial class MainWindow
         _settingsMenuInstalled = true;
     }
 
-    private static void RemoveLegacyPathMenuItems(Menu menu)
+    private static void RemovePathSelectionMenuItems(Menu menu)
     {
         MenuItem? gameDataMenu = FindTopLevelMenu(menu, "Game data", "Данные игры");
         if (gameDataMenu is null)
             return;
 
-        string[] obsoleteHeaders =
+        string[] pathSelectionHeaders =
         [
             "Load Magic 2014 folder…",
-            "Reload current folder",
             "Load unpacked workspace…",
-            "Reload unpacked workspace",
             "Загрузить папку Magic 2014…",
-            "Перезагрузить текущую папку",
-            "Загрузить распакованный workspace…",
-            "Перезагрузить распакованный workspace"
+            "Загрузить распакованный workspace…"
         ];
 
         for (int i = gameDataMenu.Items.Count - 1; i >= 0; i--)
@@ -77,7 +73,7 @@ public partial class MainWindow
                 continue;
 
             string header = NormalizeMenuHeader(item.Header);
-            if (obsoleteHeaders.Any(value => header.Equals(value, StringComparison.OrdinalIgnoreCase)))
+            if (pathSelectionHeaders.Any(value => header.Equals(value, StringComparison.OrdinalIgnoreCase)))
                 gameDataMenu.Items.RemoveAt(i);
         }
 
