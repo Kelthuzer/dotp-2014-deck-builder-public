@@ -64,7 +64,7 @@ internal static class PortableRuntimeChecks
                   <ARTID value="10001" />
                   <MULTIVERSEID value="77777" />
                   <ABILITY function="CARD_BRIDGE" />
-                  <PORTABLE_TEST mana="CUSTOM_MANA" frame="CUSTOM_FRAME" choice="CUSTOM_CHOICE" />
+                  <PORTABLE_TEST mana="CUSTOM_MANA" frame="CUSTOM_FRAME" choice="CUSTOM_CHOICE" state="SHARED_STATE" />
                 </CARD_V2>
                 """);
             string helperCard = AddPayload("CARDS\\HELPER_TOKEN.XML", """
@@ -75,9 +75,17 @@ internal static class PortableRuntimeChecks
                   <TOKEN />
                 </CARD_V2>
                 """);
+            string decoyCard = AddPayload("CARDS\\DECOY_CARD.XML", """
+                <CARD_V2>
+                  <FILENAME text="DECOY_CARD" />
+                  <ARTID value="10003" />
+                  <MULTIVERSEID value="99999" />
+                </CARD_V2>
+                """);
 
             string rootArt = AddBinaryPayload("ART_ASSETS\\ILLUSTRATIONS\\10001.TDX", [1, 2, 3, 4]);
             string helperArt = AddBinaryPayload("ART_ASSETS\\ILLUSTRATIONS\\10002.TDX", [5, 6, 7, 8]);
+            string decoyArt = AddBinaryPayload("ART_ASSETS\\ILLUSTRATIONS\\10003.TDX", [19, 20, 21, 22]);
 
             AddPayload("FUNCTIONS\\BRIDGE.LOL", """
                 function CARD_BRIDGE()
@@ -87,6 +95,10 @@ internal static class PortableRuntimeChecks
                 """);
             AddPayload("FUNCTIONS\\CONSTANTS.LOL", """
                 HELPER_CARD_ID = 88888
+                """);
+            AddPayload("FUNCTIONS\\UNRELATED_REGISTRY.LOL", """
+                SHARED_STATE = 1
+                UNRELATED_CARD_ID = 99999
                 """);
             AddPayload("SPECS\\CREATURE_TYPES.TXT", "Angel=1\nConstruct=2\n");
             AddPayload("TEXT_PERMANENT\\CREATURE_TYPE_TEXT_TEST.XML", "<Workbook />");
@@ -125,7 +137,8 @@ internal static class PortableRuntimeChecks
             WorkspaceContentVariant[] variants =
             [
                 Variant("ROOT_CARD", rootCard, "10001", rootArt),
-                Variant("HELPER_TOKEN", helperCard, "10002", helperArt)
+                Variant("HELPER_TOKEN", helperCard, "10002", helperArt),
+                Variant("DECOY_CARD", decoyCard, "10003", decoyArt)
             ];
             WorkspaceContentVariantScanResult scan = new(
                 UnpackedContentKind.Cards,
@@ -150,7 +163,7 @@ internal static class PortableRuntimeChecks
                 cancellationToken: default);
 
             Equal(2, result.CardCount,
-                "CARD_V2 -> LOL function -> LOL constant -> MULTIVERSEID must pull HELPER_TOKEN CARD_V2.");
+                "Only the reachable helper CARD_V2 should be packaged; unrelated global registries must not expand the card closure.");
             True(result.RuntimeResourceCount > 0, "Portable runtime resources were not recorded.");
             True(result.Warnings.Count == 0, $"Unexpected portable-runtime warning: {string.Join(" | ", result.Warnings)}");
 
@@ -166,6 +179,12 @@ internal static class PortableRuntimeChecks
             ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\ART_ASSETS\\FRONTEND\\CUSTOM_CHOICE.TDX");
             ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\ART_ASSETS\\TEXTURES\\EFFECTS\\CUSTOM_EFFECT_TEXTURE.TDX");
 
+            True(!paths.Any(path => path.Contains("UNRELATED_REGISTRY.LOL", StringComparison.OrdinalIgnoreCase)),
+                "An unrelated LOL global registry must not become reachable from arbitrary CARD_V2 text.");
+            True(!paths.Any(path => path.Contains("DECOY_CARD.XML", StringComparison.OrdinalIgnoreCase)),
+                "Cards mentioned only by an unrelated runtime registry must not leak into the portable deck.");
+            True(!paths.Any(path => path.Contains("10003.TDX", StringComparison.OrdinalIgnoreCase)),
+                "Artwork for an unrelated registry card must not leak into the portable deck.");
             True(!paths.Any(path => path.Contains("UNUSED_EFFECT.TDX", StringComparison.OrdinalIgnoreCase)),
                 "Unreferenced heavy textures must not be copied just because they exist in the workspace.");
             True(!paths.Any(path => path.Contains("\\DECKS\\FOREIGN_DECK.XML", StringComparison.OrdinalIgnoreCase)),
@@ -182,6 +201,8 @@ internal static class PortableRuntimeChecks
                 "Portable runtime provenance breakdown must be written.");
             True(provenance.Contains("HELPER_TOKEN", StringComparison.Ordinal),
                 "Runtime-discovered MULTIVERSEID dependency must be recorded through its canonical card closure.");
+            True(!provenance.Contains("DECOY_CARD", StringComparison.Ordinal),
+                "Unrelated registry cards must not be recorded in portable provenance.");
         }
         finally
         {
