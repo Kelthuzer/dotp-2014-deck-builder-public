@@ -20,24 +20,26 @@ public partial class MainWindow
     private async Task ApplyConfiguredDataPathsAsync()
     {
         string gameDirectory = AppSettingsService.Current.GameDirectory;
-        if (!string.IsNullOrWhiteSpace(gameDirectory)
-            && Directory.Exists(gameDirectory)
-            && !string.Equals(_gameDirectory, gameDirectory, StringComparison.OrdinalIgnoreCase))
+        if (!string.IsNullOrWhiteSpace(gameDirectory) && Directory.Exists(gameDirectory))
         {
             while (_loading)
                 await Task.Delay(100);
-            await LoadCatalogAsync(gameDirectory);
+
+            if (!string.Equals(_gameDirectory, gameDirectory, StringComparison.OrdinalIgnoreCase))
+                await LoadCatalogAsync(gameDirectory);
         }
 
         string workspaceDirectory = AppSettingsService.Current.WorkspaceDirectory;
-        if (!string.IsNullOrWhiteSpace(workspaceDirectory)
-            && Directory.Exists(workspaceDirectory)
-            && (!string.Equals(_workspaceDirectory, workspaceDirectory, StringComparison.OrdinalIgnoreCase)
-                || _workspaceCardVariants is null))
+        if (!string.IsNullOrWhiteSpace(workspaceDirectory) && Directory.Exists(workspaceDirectory))
         {
             while (_loading)
                 await Task.Delay(100);
-            await LoadWorkspaceAsync(workspaceDirectory);
+
+            if (!string.Equals(_workspaceDirectory, workspaceDirectory, StringComparison.OrdinalIgnoreCase)
+                || _workspaceCardVariants is null)
+            {
+                await LoadWorkspaceAsync(workspaceDirectory);
+            }
         }
     }
 
