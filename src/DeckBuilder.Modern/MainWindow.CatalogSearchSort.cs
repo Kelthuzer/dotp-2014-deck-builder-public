@@ -148,20 +148,34 @@ public partial class MainWindow
         }
         else if (mode == "type-tag")
         {
-            // Search the complete TypeLine. Every type/supertype/subtype is a valid tag:
-            // Creature, Artifact, Legendary, Elf, Goblin, Zombie, Knight, Instant, Land, etc.
-            cards = _catalog.Where(card =>
-                card.TypeLine.Contains(text, StringComparison.OrdinalIgnoreCase));
+            // Treat whitespace as an AND separator. This also makes searches resilient to names/type
+            // lines that contain non-breaking spaces, tabs or other separators in extracted content.
+            cards = _catalog.Where(card => SearchTermsMatch(text, card.TypeLine));
         }
         else
         {
-            cards = _catalog.Where(card =>
-                card.LocalizedName.Contains(text, StringComparison.OrdinalIgnoreCase)
-                || card.EnglishName.Contains(text, StringComparison.OrdinalIgnoreCase)
-                || card.FileName.Contains(text, StringComparison.OrdinalIgnoreCase));
+            cards = _catalog.Where(card => SearchTermsMatch(
+                text,
+                card.LocalizedName,
+                card.EnglishName,
+                card.FileName));
         }
 
         return SortCatalogResults(cards).ToArray();
+    }
+
+    private static bool SearchTermsMatch(string query, params string?[] fields)
+    {
+        string[] terms = query.Split(
+            (char[]?)null,
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        if (terms.Length == 0)
+            return true;
+
+        return terms.All(term => fields.Any(field =>
+            !string.IsNullOrWhiteSpace(field)
+            && field.Contains(term, StringComparison.OrdinalIgnoreCase)));
     }
 
     private IEnumerable<CardRecord> SortCatalogResults(IEnumerable<CardRecord> cards)
