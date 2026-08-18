@@ -68,10 +68,13 @@ internal static class AllCardRuntimeChecks
 
             AddPayload("FUNCTIONS\\USED.LOL", "function USED_FUNCTION() end");
             AddPayload("FUNCTIONS\\DYNAMIC_ONLY.LOL", "DYNAMIC_TABLE = { 1, 2, 3 }");
+            AddPayload("FUNCTIONS\\_List Functions.ahk", "; editor helper, not game runtime");
             AddPayload("SPECS\\CREATURE_TYPES.TXT", "Angel=1\nConstruct=2\n");
             AddPayload("SPECS\\DYNAMIC_ONLY.TXT", "dynamic=true\n");
             AddPayload("TEXT_PERMANENT\\CREATURE_TYPE_TEXT_TEST.XML", "<Workbook />");
             AddPayload("TEXT_PERMANENT\\DYNAMIC_ONLY.XML", "<Workbook />");
+            AddPayload("TEXT_PERMANENT\\.idea\\workspace.xml", "<project />");
+            AddPayload("TEXT_PERMANENT\\TEXT_PERMANENT.iml", "<module />");
             AddBinaryPayload("ART_ASSETS\\TEXTURES\\EFFECTS\\USED_EFFECT.TDX", [5, 6]);
 
             DotpVersionPackageManifest manifest = new(
@@ -147,6 +150,12 @@ internal static class AllCardRuntimeChecks
                 "Shared runtime WAD must not contain CARD_V2 payloads.");
             True(!paths.Any(path => path.Contains("\\ART_ASSETS\\ILLUSTRATIONS\\10001.TDX", StringComparison.OrdinalIgnoreCase)),
                 "Shared runtime WAD must not contain normal card illustrations.");
+            True(!paths.Any(path => path.EndsWith("_List Functions.ahk", StringComparison.OrdinalIgnoreCase)),
+                "Editor helper scripts must not be copied into the shared runtime WAD.");
+            True(!paths.Any(path => path.Contains("\\.idea\\", StringComparison.OrdinalIgnoreCase)),
+                "IDE metadata must not be copied into the shared runtime WAD.");
+            True(!paths.Any(path => path.EndsWith(".iml", StringComparison.OrdinalIgnoreCase)),
+                "IDE module files must not be copied into the shared runtime WAD.");
 
             string runtimeManifest = File.ReadAllText(result.ManifestPath);
             True(runtimeManifest.Contains("\"formatVersion\": 2", StringComparison.Ordinal),
@@ -154,11 +163,11 @@ internal static class AllCardRuntimeChecks
             True(runtimeManifest.Contains("TEXT_PERMANENT", StringComparison.Ordinal),
                 "Shared runtime manifest must record the complete permanent-text tree.");
             True(result.RuntimeResourceCounts.TryGetValue("FUNCTIONS", out int functions) && functions == 2,
-                "The full FUNCTIONS tree must be included, not only statically reachable functions.");
+                "The full FUNCTIONS game-runtime tree must be included, not only statically reachable functions.");
             True(result.RuntimeResourceCounts.TryGetValue("SPECS", out int specs) && specs == 2,
-                "The full SPECS tree must be included.");
+                "The full SPECS game-runtime tree must be included.");
             True(result.RuntimeResourceCounts.TryGetValue("TEXT_PERMANENT", out int text) && text == 2,
-                "The full TEXT_PERMANENT tree must be included.");
+                "The full TEXT_PERMANENT game-runtime tree must be included while editor metadata is excluded.");
         }
         finally
         {
