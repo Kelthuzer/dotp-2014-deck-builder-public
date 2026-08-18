@@ -156,7 +156,7 @@ public sealed class DeckPackageWizardWindow : Window
         form.Children.Add(_coverDetails);
 
         form.Children.Add(SectionTitle("Файл WAD"));
-        Button browseOutput = new() { Content = "Обзор…", Margin = new Thickness(8, 0, 0, 0) };
+        Button browseOutput = new() { Content = "Изменить…", Margin = new Thickness(8, 0, 0, 0), ToolTip = "Изменит также папку WAD в настройках" };
         browseOutput.Click += BrowseOutput_Click;
         Grid outputRow = new();
         outputRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -316,12 +316,19 @@ public sealed class DeckPackageWizardWindow : Window
             return;
 
         string name = string.IsNullOrWhiteSpace(_nameBox.Text) ? "CUSTOM_DECK" : SanitizeCode(_nameBox.Text);
-        string directory = !string.IsNullOrWhiteSpace(_gameDirectory) && Directory.Exists(_gameDirectory)
-            ? _gameDirectory
-            : Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        string configured = AppSettingsService.Current.WadOutputDirectory;
+        string directory = !string.IsNullOrWhiteSpace(configured)
+            ? configured
+            : !string.IsNullOrWhiteSpace(_gameDirectory) && Directory.Exists(_gameDirectory)
+                ? _gameDirectory
+                : Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
         string expectedName = $"Data_Decks_{_uidText.Text}_{name}.wad";
+        string currentDirectory = string.IsNullOrWhiteSpace(_outputBox.Text)
+            ? string.Empty
+            : Path.GetDirectoryName(_outputBox.Text) ?? string.Empty;
         if (string.IsNullOrWhiteSpace(_outputBox.Text)
-            || string.Equals(Path.GetDirectoryName(_outputBox.Text), directory, StringComparison.OrdinalIgnoreCase))
+            || string.Equals(currentDirectory, directory, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(currentDirectory, _gameDirectory, StringComparison.OrdinalIgnoreCase))
         {
             _outputBox.Text = Path.Combine(directory, expectedName);
         }
@@ -415,6 +422,7 @@ public sealed class DeckPackageWizardWindow : Window
 
     private void BrowseOutput_Click(object sender, RoutedEventArgs e)
     {
+        string configured = AppSettingsService.Current.WadOutputDirectory;
         SaveFileDialog dialog = new()
         {
             Title = "Куда сохранить WAD колоды",
@@ -424,12 +432,22 @@ public sealed class DeckPackageWizardWindow : Window
             FileName = string.IsNullOrWhiteSpace(_outputBox.Text)
                 ? $"Data_Decks_{_uidText.Text}_{SanitizeCode(_nameBox.Text)}.wad"
                 : Path.GetFileName(_outputBox.Text),
-            InitialDirectory = string.IsNullOrWhiteSpace(_outputBox.Text)
-                ? _gameDirectory
-                : Path.GetDirectoryName(_outputBox.Text)
+            InitialDirectory = !string.IsNullOrWhiteSpace(configured)
+                ? configured
+                : string.IsNullOrWhiteSpace(_outputBox.Text)
+                    ? _gameDirectory
+                    : Path.GetDirectoryName(_outputBox.Text)
         };
-        if (dialog.ShowDialog(this) == true)
-            _outputBox.Text = dialog.FileName;
+        if (dialog.ShowDialog(this) != true)
+            return;
+
+        _outputBox.Text = dialog.FileName;
+        string? selectedDirectory = Path.GetDirectoryName(dialog.FileName);
+        if (!string.IsNullOrWhiteSpace(selectedDirectory))
+        {
+            AppSettingsService.Current.WadOutputDirectory = Path.GetFullPath(selectedDirectory);
+            AppSettingsService.Save();
+        }
     }
 
     private void RefreshValidation()
@@ -495,6 +513,14 @@ public sealed class DeckPackageWizardWindow : Window
         CustomCoverZoom = _customCoverZoom;
         CustomCoverSkin = _customCoverSkin;
         OutputPath = Path.GetFullPath(_outputBox.Text.Trim());
+
+        string? outputDirectory = Path.GetDirectoryName(OutputPath);
+        if (!string.IsNullOrWhiteSpace(outputDirectory))
+        {
+            AppSettingsService.Current.WadOutputDirectory = outputDirectory;
+            AppSettingsService.Save();
+        }
+
         DialogResult = true;
     }
 
