@@ -97,6 +97,10 @@ public sealed class UnpackedContentWadBuilder
             WriteWad(temporaryPath, header, payloads, cancellationToken);
             ValidateWad(temporaryPath, payloads, cancellationToken);
             CommitValidatedWad(temporaryPath, outputPath);
+
+            // Validate the committed path as well, not only the temporary WAD. This catches any
+            // filesystem/hardlink write corruption before the caller can report a successful build.
+            ValidateWad(outputPath, payloads, CancellationToken.None);
         }
         finally
         {
@@ -121,12 +125,9 @@ public sealed class UnpackedContentWadBuilder
             return;
         }
 
-        // Do not replace the directory entry when rebuilding an existing WAD. The user's active
-        // game-root WAD can be a hardlink to the copy in MyDecks; File.Move(..., overwrite:true)
-        // would detach that hardlink and leave the game loading the previous file object forever.
-        // The temporary WAD has already passed full payload validation, so copy its bytes into the
-        // existing file object in one non-cancellable commit phase. All hardlink names then observe
-        // the rebuilt WAD immediately.
+        // Preserve an existing hardlink set by rewriting the file object in place. Do not delete the
+        // temporary WAD here: on Windows its source FileStream is still open until this method exits.
+        // The outer Build finally removes it after both streams have been disposed.
         using FileStream source = new(
             temporaryPath,
             FileMode.Open,
@@ -143,7 +144,6 @@ public sealed class UnpackedContentWadBuilder
             FileOptions.SequentialScan);
         source.CopyTo(destination, 1024 * 1024);
         destination.Flush(flushToDisk: true);
-        File.Delete(temporaryPath);
     }
 
     private static ContentCollection CollectContent(
