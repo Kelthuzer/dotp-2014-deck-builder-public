@@ -1,5 +1,7 @@
 using System.Reflection;
+using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using DeckBuilder.GameData;
 using DeckBuilder.Modern;
 
@@ -109,6 +111,7 @@ internal static class Program
         failed |= !VerifyPresenter("{1}{U}{U}", 3);
         failed |= !VerifyPresenter("{B/G}{R/P}", 2);
         failed |= !VerifyPresenterContainsText("{T}", "{T}");
+        failed |= !VerifyLegacyRulesItalics(modern);
 
         if (failed)
         {
@@ -117,8 +120,8 @@ internal static class Program
 
         Console.WriteLine(
             $"Verified {RequiredEmbeddedIds.Length} embedded DotP symbols, " +
-            $"{RequiredCostMappings.Count} legacy cost mappings, {RequiredTextMappings.Count} legacy text mappings " +
-            "and representative presenter output.");
+            $"{RequiredCostMappings.Count} legacy cost mappings, {RequiredTextMappings.Count} legacy text mappings, " +
+            "legacy rules italics and representative presenter output.");
         return 0;
     }
 
@@ -174,6 +177,35 @@ internal static class Program
         }
 
         Console.Error.WriteLine($"PRESENTER FAIL {cost}: expected literal text {expectedText}.");
+        return false;
+    }
+
+    private static bool VerifyLegacyRulesItalics(Assembly modern)
+    {
+        Type renderer = modern.GetType("DeckBuilder.Modern.CardSymbolRenderer", throwOnError: true)!;
+        MethodInfo renderRules = renderer.GetMethod("RenderRules", BindingFlags.Static | BindingFlags.Public)
+            ?? throw new MissingMethodException(renderer.FullName, "RenderRules");
+
+        Paragraph paragraph = new();
+        const string source = "Regular|italic reminder|regular tail|";
+        renderRules.Invoke(null, [paragraph.Inlines, source, null]);
+
+        Run[] runs = paragraph.Inlines.OfType<Run>().ToArray();
+        string visible = string.Concat(runs.Select(run => run.Text));
+        bool valid = visible == "Regularitalic reminderregular tail"
+                     && !visible.Contains('|')
+                     && runs.Any(run => run.Text.Contains("italic reminder", StringComparison.Ordinal)
+                                        && run.FontStyle == FontStyles.Italic)
+                     && runs.Any(run => run.Text.Contains("regular tail", StringComparison.Ordinal)
+                                        && run.FontStyle != FontStyles.Italic);
+        if (valid)
+        {
+            Console.WriteLine("RULES ITALICS OK legacy | marker");
+            return true;
+        }
+
+        Console.Error.WriteLine(
+            $"RULES ITALICS FAIL: visible='{visible}', runs={string.Join(", ", runs.Select(run => $"[{run.Text}:{run.FontStyle}]") )}");
         return false;
     }
 }
