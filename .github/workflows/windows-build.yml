@@ -113,23 +113,11 @@ jobs:
             throw "The original x64 Squish card-art decoder was not published beside the modern executable."
           }
 
-      - name: Package release archives
+      - name: Package modern release archive
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $outputs = @{
-            "x86" = "DotP 2014 Deck Builder\bin\Release"
-            "x64" = "DotP 2014 Deck Builder\bin\x64\Release"
-          }
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
-          foreach ($platform in $outputs.Keys) {
-            $output = $outputs[$platform]
-            $executable = Join-Path $output "DotP 2014 Deck Builder.exe"
-            if (-not (Test-Path $executable)) {
-              throw "Expected executable was not produced for ${platform}: $executable"
-            }
-            Compress-Archive -Path "$output\*" -DestinationPath "artifacts\dotp-2014-deck-builder-$platform.zip" -Force
-          }
           Compress-Archive `
             -Path "artifacts\modern-x64\*" `
             -DestinationPath "artifacts\dotp-2014-deck-builder-modern-x64.zip" `
@@ -141,24 +129,37 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = "Stop"
-          $assets = Get-ChildItem artifacts\*.zip | Select-Object -ExpandProperty FullName
-          if ($assets.Count -ne 3) {
-            throw "Expected three release archives, found $($assets.Count)."
-          }
+          $asset = (Resolve-Path "artifacts\dotp-2014-deck-builder-modern-x64.zip").Path
+          $assetName = Split-Path $asset -Leaf
+
           gh release view continuous --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload continuous $assets --clobber --repo $env:GITHUB_REPOSITORY
+            $existingAssets = @(gh release view continuous --repo $env:GITHUB_REPOSITORY --json assets --jq '.assets[].name')
+            foreach ($existingAsset in $existingAssets) {
+              if (-not [string]::IsNullOrWhiteSpace($existingAsset)) {
+                gh release delete-asset continuous $existingAsset --yes --repo $env:GITHUB_REPOSITORY
+                if ($LASTEXITCODE -ne 0) {
+                  throw "Could not delete old continuous release asset: $existingAsset"
+                }
+              }
+            }
+            gh release upload continuous $asset --repo $env:GITHUB_REPOSITORY
           }
           else {
-            gh release create continuous $assets `
+            gh release create continuous $asset `
               --prerelease `
               --target $env:GITHUB_SHA `
               --title "Continuous Windows build" `
-              --notes "Automatic legacy x86/x64 builds and the modern .NET 8 x64 preview from main." `
+              --notes "Automatic modern .NET 8 x64 preview from main." `
               --repo $env:GITHUB_REPOSITORY
           }
           if ($LASTEXITCODE -ne 0) {
             throw "Publishing the continuous build failed with exit code $LASTEXITCODE."
+          }
+
+          $publishedAssets = @(gh release view continuous --repo $env:GITHUB_REPOSITORY --json assets --jq '.assets[].name')
+          if ($publishedAssets.Count -ne 1 -or $publishedAssets[0] -ne $assetName) {
+            throw "Continuous release must contain only $assetName; found: $($publishedAssets -join ', ')"
           }
 
       - name: Report reproducible build status
@@ -171,7 +172,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           $state = if ($env:BUILD_RESULT -eq "success") { "success" } else { "failure" }
           $description = if ($state -eq "success") {
-            "Legacy x86/x64 and modern x64 archives were published."
+            "Modern x64 archive was published."
           }
           else {
             "The reproducible Windows build failed; open the run log."
