@@ -71,6 +71,26 @@ internal static partial class CardSymbolRenderer
 
     private static void AppendText(InlineCollection target, string text, bool italic)
     {
+        // DotP uses a bare pipe as an inline italic toggle. The legacy preview consumed the marker
+        // instead of drawing it; some localized rules strings contain an unmatched trailing marker,
+        // which still must stay invisible rather than appearing as a stray "tail" on the card.
+        bool currentItalic = italic;
+        int segmentStart = 0;
+        for (int index = 0; index < text.Length; index++)
+        {
+            if (text[index] != '|')
+                continue;
+
+            AppendSymbolText(target, text[segmentStart..index], currentItalic);
+            currentItalic = !currentItalic;
+            segmentStart = index + 1;
+        }
+
+        AppendSymbolText(target, text[segmentStart..], currentItalic);
+    }
+
+    private static void AppendSymbolText(InlineCollection target, string text, bool italic)
+    {
         MatchCollection matches = SymbolTokenRegex().Matches(text);
         int position = 0;
         foreach (Match match in matches)
