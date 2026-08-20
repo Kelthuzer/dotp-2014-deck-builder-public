@@ -126,7 +126,7 @@ internal static class WorkspaceMergedRuntimeCatalog
                         wad.Name,
                         wad.PrimaryOrder,
                         storagePath,
-                        file.Sha256));
+                        file.OriginalSha256));
                 }
             }
         }
