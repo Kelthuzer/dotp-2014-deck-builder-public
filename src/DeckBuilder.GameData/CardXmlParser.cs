@@ -7,7 +7,16 @@ internal static class CardXmlParser
 {
     public static CardRecord? Parse(string xml, string source)
     {
-        XDocument document = XDocument.Parse(xml, LoadOptions.None);
+        XDocument document;
+        try
+        {
+            document = XDocument.Parse(xml, LoadOptions.None);
+        }
+        catch
+        {
+            return CardXmlFallbackParser.TryParse(xml, source);
+        }
+
         XElement? card = document.Root;
         if (card is null || !card.Name.LocalName.Equals("CARD_V2", StringComparison.OrdinalIgnoreCase))
         {
@@ -17,13 +26,13 @@ internal static class CardXmlParser
 
         if (card is null)
         {
-            return null;
+            return CardXmlFallbackParser.TryParse(xml, source);
         }
 
         string fileName = Attribute(Child(card, "FILENAME"), "text");
         if (string.IsNullOrWhiteSpace(fileName))
         {
-            return null;
+            return CardXmlFallbackParser.TryParse(xml, source);
         }
 
         XElement? title = Child(card, "TITLE");
