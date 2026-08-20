@@ -84,11 +84,13 @@ public sealed class WorkspaceAllCardRuntimeBuilder
         {
             string shown = string.Join(", ", catalog.MissingCwTokenKeys.Take(20));
             string more = catalog.MissingCwTokenKeys.Count > 20
-                ? $" и ещё {catalog.MissingCwTokenKeys.Count - 20:N0}"
+                ? $" and {catalog.MissingCwTokenKeys.Count - 20:N0} more"
                 : string.Empty;
-            throw new InvalidDataException(
-                $"The merged runtime cannot cover CW_Tokens archetypes used by the workspace: {shown}{more}. " +
-                "Refresh/re-extract the matching Community WAD runtime before packaging.");
+            string warning =
+                $"The workspace contains CARD_V2 definitions for CW_Tokens archetypes not present in the effective CW_TOKENS runtime: {shown}{more}. " +
+                "The global runtime was still built; packaging a deck that actually uses one of these incompatible archetypes will fail explicitly.";
+            if (warningKeys.Add(warning))
+                warnings.Add(warning);
         }
 
         int effectiveOrder = Math.Max(order, catalog.SourceMaxOrder + 1);
@@ -180,6 +182,7 @@ public sealed class WorkspaceAllCardRuntimeBuilder
                 sharedRuntimeTrees = new[] { "FUNCTIONS", "SPECS", "TEXT_PERMANENT", "ALL_SHARED_RUNTIME" },
                 runtimeResourceCount = catalog.ResourceCount,
                 runtimeResourceCounts = resourceCounts,
+                missingCwTokenKeys = catalog.MissingCwTokenKeys.OrderBy(value => value, StringComparer.OrdinalIgnoreCase),
                 excludedTrees = new[]
                 {
                     "CARDS",
