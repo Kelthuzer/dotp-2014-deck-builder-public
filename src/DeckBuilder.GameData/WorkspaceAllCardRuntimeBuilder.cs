@@ -13,10 +13,10 @@ public sealed record WorkspaceAllCardRuntimeBuildResult(
     IReadOnlyList<string> Warnings);
 
 /// <summary>
-/// Builds one complete shared runtime WAD for an extracted workspace. Every effective non-card
-/// runtime resource is included once. Duplicate paths from multiple source WADs are collapsed by
-/// the merged runtime catalog, so per-deck packaging no longer has to guess which mechanics/assets
-/// a card might reach dynamically.
+/// Builds one complete shared runtime WAD for an extracted workspace. Every effective shared
+/// non-card runtime resource is included once. Duplicate paths from multiple source WADs are
+/// collapsed by the merged runtime catalog, so per-deck packaging no longer has to guess which
+/// mechanics/assets a card might reach dynamically.
 /// </summary>
 public sealed class WorkspaceAllCardRuntimeBuilder
 {
@@ -180,7 +180,14 @@ public sealed class WorkspaceAllCardRuntimeBuilder
                 sharedRuntimeTrees = new[] { "FUNCTIONS", "SPECS", "TEXT_PERMANENT", "ALL_SHARED_RUNTIME" },
                 runtimeResourceCount = catalog.ResourceCount,
                 runtimeResourceCounts = resourceCounts,
-                excludedTrees = new[] { "CARDS", "DECKS", "UNLOCKS", "ART_ASSETS\\ILLUSTRATIONS" },
+                excludedTrees = new[]
+                {
+                    "CARDS",
+                    "DECKS",
+                    "UNLOCKS",
+                    "AI_PERSONALITIES",
+                    "ART_ASSETS\\ILLUSTRATIONS"
+                },
                 resources = runtimePaths,
                 warnings
             }, JsonOptions));
