@@ -116,7 +116,7 @@ internal static class WorkspaceRuntimeCompatibility
         IReadOnlySet<string> requiredKeys)
     {
         if (requiredKeys.Count == 0
-            || !StartsWithTree(relativePath, "FUNCTIONS")
+            || !IsCwTokensRuntimeResource(relativePath)
             || !IsTextRuntimeFile(relativePath)
             || !File.Exists(storagePath))
         {
@@ -144,7 +144,7 @@ internal static class WorkspaceRuntimeCompatibility
 
         foreach ((string relativePath, string storagePath) in resources)
         {
-            if (!StartsWithTree(relativePath, "FUNCTIONS")
+            if (!IsCwTokensRuntimeResource(relativePath)
                 || !IsTextRuntimeFile(relativePath)
                 || !File.Exists(storagePath))
             {
@@ -191,6 +191,15 @@ internal static class WorkspaceRuntimeCompatibility
         }
 
         return false;
+    }
+
+    private static bool IsCwTokensRuntimeResource(string relativePath)
+    {
+        if (!StartsWithTree(relativePath, "FUNCTIONS"))
+            return false;
+
+        return Path.GetFileNameWithoutExtension(relativePath)
+            .Equals("CW_TOKENS", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool ContainsTokenKey(string text, string key)
