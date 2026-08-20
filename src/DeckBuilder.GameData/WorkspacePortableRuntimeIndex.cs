@@ -95,19 +95,22 @@ internal sealed class WorkspacePortableRuntimeIndex
     private readonly IReadOnlyDictionary<string, RuntimeResource[]> _resourcesByFunctionAlias;
     private readonly IReadOnlyDictionary<string, RuntimeResource[]> _resourcesByGlobalAlias;
     private readonly IReadOnlyList<string> _implicitSharedPaths;
+    private readonly IReadOnlySet<string> _missingCwTokenKeys;
 
     private WorkspacePortableRuntimeIndex(
         IReadOnlyDictionary<string, RuntimeResource> resourcesByPath,
         IReadOnlyDictionary<string, RuntimeResource[]> resourcesByConcreteAlias,
         IReadOnlyDictionary<string, RuntimeResource[]> resourcesByFunctionAlias,
         IReadOnlyDictionary<string, RuntimeResource[]> resourcesByGlobalAlias,
-        IReadOnlyList<string> implicitSharedPaths)
+        IReadOnlyList<string> implicitSharedPaths,
+        IReadOnlySet<string> missingCwTokenKeys)
     {
         _resourcesByPath = resourcesByPath;
         _resourcesByConcreteAlias = resourcesByConcreteAlias;
         _resourcesByFunctionAlias = resourcesByFunctionAlias;
         _resourcesByGlobalAlias = resourcesByGlobalAlias;
         _implicitSharedPaths = implicitSharedPaths;
+        _missingCwTokenKeys = missingCwTokenKeys;
     }
 
     public bool IsEmpty => _resourcesByPath.Count == 0;
@@ -125,6 +128,8 @@ internal sealed class WorkspacePortableRuntimeIndex
             return Empty();
 
         string workspace = Path.GetFullPath(workspaceDirectory);
+        IReadOnlySet<string> workspaceCwTokenKeys =
+            WorkspaceRuntimeCompatibility.ScanWorkspaceCwTokenKeys(workspace, cancellationToken);
         string[] manifests = Directory.EnumerateFiles(
                 workspace,
                 GameVersionPackageService.ManifestFileName,
@@ -185,12 +190,23 @@ internal sealed class WorkspacePortableRuntimeIndex
         RuntimeResource[] effective = candidates
             .GroupBy(resource => resource.RelativePath, StringComparer.OrdinalIgnoreCase)
             .Select(group => group
-                .OrderBy(resource => resource.WadOrder)
+                .OrderBy(resource => WorkspaceRuntimeCompatibility.CountCwTokenCoverage(
+                    resource.RelativePath,
+                    resource.StoragePath,
+                    workspaceCwTokenKeys))
+                .ThenBy(resource => resource.WadOrder)
                 .ThenBy(resource => resource.WadName, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(resource => resource.PackageName, StringComparer.OrdinalIgnoreCase)
                 .Last())
             .OrderBy(resource => resource.RelativePath, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+
+        IReadOnlySet<string> availableCwTokenKeys = WorkspaceRuntimeCompatibility.FindAvailableCwTokenKeys(
+            effective.Select(resource => (resource.RelativePath, resource.StoragePath)),
+            workspaceCwTokenKeys);
+        HashSet<string> missingCwTokenKeys = workspaceCwTokenKeys
+            .Where(key => !availableCwTokenKeys.Contains(key))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         Dictionary<string, RuntimeResource> resourcesByPath = effective.ToDictionary(
             resource => resource.RelativePath,
@@ -206,7 +222,8 @@ internal sealed class WorkspacePortableRuntimeIndex
             aliasIndexes.Concrete,
             aliasIndexes.Functions,
             aliasIndexes.Globals,
-            implicitSharedPaths);
+            implicitSharedPaths,
+            missingCwTokenKeys);
     }
 
     public WorkspacePortableRuntimeResolution Resolve(
@@ -366,6 +383,16 @@ internal sealed class WorkspacePortableRuntimeIndex
         {
             AddWarning(warnings, warningKeys, $"Could not inspect dependency text {fullPath}: {exception.Message}");
             return;
+        }
+
+        foreach (string cwTokenKey in WorkspaceRuntimeCompatibility.ExtractCwTokenKeys(text))
+        {
+            if (_missingCwTokenKeys.Contains(cwTokenKey))
+            {
+                throw new InvalidDataException(
+                    $"CW_Tokens archetype '{cwTokenKey}' used by {sourceLabel} is absent from the effective FUNCTIONS runtime. " +
+                    "The card and Community WAD token table are incompatible; refresh/re-extract the matching runtime before packaging.");
+            }
         }
 
         if (discoverCardReferences)
@@ -715,7 +742,8 @@ internal sealed class WorkspacePortableRuntimeIndex
         new Dictionary<string, RuntimeResource[]>(StringComparer.OrdinalIgnoreCase),
         new Dictionary<string, RuntimeResource[]>(StringComparer.OrdinalIgnoreCase),
         new Dictionary<string, RuntimeResource[]>(StringComparer.OrdinalIgnoreCase),
-        Array.Empty<string>());
+        Array.Empty<string>(),
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase));
 
     private sealed record RuntimeAliasIndexes(
         IReadOnlyDictionary<string, RuntimeResource[]> Concrete,
