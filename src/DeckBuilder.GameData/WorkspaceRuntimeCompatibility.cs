@@ -65,20 +65,35 @@ internal static class WorkspaceRuntimeCompatibility
                     string storagePath = Path.Combine(
                         wadDirectory,
                         file.StoragePath.Replace('/', Path.DirectorySeparatorChar));
-                    if (!File.Exists(storagePath))
-                        continue;
-
-                    try
-                    {
-                        foreach (string key in ExtractCwTokenKeys(File.ReadAllText(storagePath)))
-                            keys.Add(key);
-                    }
-                    catch
-                    {
-                        // A malformed/unreadable unrelated card is handled by the normal scanners.
-                    }
+                    AddCardFileKeys(storagePath, keys);
                 }
             }
+        }
+
+        return keys;
+    }
+
+    /// <summary>
+    /// Scans only the CARD_V2 files that are actually effective for a build. This is intentionally
+    /// separate from the broad workspace scan: an extracted workspace can contain historical or
+    /// overridden copies of the same card, and those stale copies must not force the shared runtime
+    /// to satisfy token archetypes that the effective game content no longer uses.
+    /// </summary>
+    public static IReadOnlySet<string> ScanCardFilesCwTokenKeys(
+        IEnumerable<string> cardPaths,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(cardPaths);
+
+        HashSet<string> keys = new(StringComparer.OrdinalIgnoreCase);
+        foreach (string storagePath in cardPaths
+                     .Where(path => !string.IsNullOrWhiteSpace(path))
+                     .Select(Path.GetFullPath)
+                     .Distinct(StringComparer.OrdinalIgnoreCase)
+                     .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            AddCardFileKeys(storagePath, keys);
         }
 
         return keys;
@@ -191,6 +206,22 @@ internal static class WorkspaceRuntimeCompatibility
         }
 
         return false;
+    }
+
+    private static void AddCardFileKeys(string storagePath, ISet<string> keys)
+    {
+        if (!File.Exists(storagePath))
+            return;
+
+        try
+        {
+            foreach (string key in ExtractCwTokenKeys(File.ReadAllText(storagePath)))
+                keys.Add(key);
+        }
+        catch
+        {
+            // A malformed/unreadable unrelated card is handled by the normal scanners.
+        }
     }
 
     private static bool IsCwTokensRuntimeResource(string relativePath)
