@@ -21,9 +21,10 @@ internal sealed record WorkspaceMergedRuntimeCatalogSnapshot(
 }
 
 /// <summary>
-/// Builds the effective shared runtime view of an extracted workspace. Every non-card runtime
-/// resource is included once. Duplicate paths from several WADs are collapsed to the effective
-/// source, with CW_TOKENS compatibility taking precedence before normal WAD order.
+/// Builds the effective shared runtime view of an extracted workspace. Every shared non-card
+/// runtime resource is included once. Duplicate paths from several WADs are collapsed to the
+/// effective source, with CW_TOKENS compatibility taking precedence before normal WAD order.
+/// Card/deck payloads, personalities and ordinary card illustrations stay deck-specific.
 /// </summary>
 internal static class WorkspaceMergedRuntimeCatalog
 {
@@ -33,7 +34,8 @@ internal static class WorkspaceMergedRuntimeCatalog
     {
         "CARDS",
         "DECKS",
-        "UNLOCKS"
+        "UNLOCKS",
+        "AI_PERSONALITIES"
     };
 
     private const string IllustrationTree = "ART_ASSETS\\ILLUSTRATIONS";
