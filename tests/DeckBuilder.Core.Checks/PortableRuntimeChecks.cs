@@ -117,6 +117,7 @@ internal static class PortableRuntimeChecks
             AddBinaryPayload("ART_ASSETS\\FRONTEND\\CUSTOM_CHOICE.TDX", [13, 14]);
             AddBinaryPayload("ART_ASSETS\\TEXTURES\\EFFECTS\\CUSTOM_EFFECT_TEXTURE.TDX", [15, 16]);
             AddBinaryPayload("ART_ASSETS\\TEXTURES\\EFFECTS\\UNUSED_EFFECT.TDX", [17, 18]);
+            AddBinaryPayload("ART_ASSETS\\TEXTURES\\DECKS\\PORTABLE_DECK.TDX", [23, 24]);
 
             // Foreign game content must never leak into the portable support WAD.
             AddPayload("DECKS\\FOREIGN_DECK.XML", "<DECK uid=\"999\" />");
@@ -166,31 +167,43 @@ internal static class PortableRuntimeChecks
                 scan,
                 selections: null,
                 workspaceDirectory: root,
-                deckBoxImageId: null,
+                deckBoxImageId: "PORTABLE_DECK",
                 deckBoxTexturePath: null,
                 runtimeRootIdentifiers: null,
-                order: 50,
+                order: 0,
                 cancellationToken: default);
 
             Equal(2, result.CardCount,
                 "Only the reachable helper CARD_V2 should be packaged; unrelated global registries must not expand the card closure.");
-            True(result.RuntimeResourceCount > 0, "Portable runtime resources were not recorded.");
+            True(result.SharedRuntimeResourceCount > 0,
+                "Card mechanics must be resolved against the shared runtime.");
+            Equal(1, result.RuntimeResourceCount,
+                "Only the explicit deck texture should remain in the per-deck runtime payload.");
+            True(File.Exists(result.SharedRuntimeWadPath),
+                "Per-deck packaging must ensure the shared runtime WAD exists.");
             True(result.Warnings.Count == 0, $"Unexpected portable-runtime warning: {string.Join(" | ", result.Warnings)}");
 
             HashSet<string> paths = WadPaths(output);
             ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\CARDS\\ROOT_CARD.XML");
             ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\CARDS\\HELPER_TOKEN.XML");
-            ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\FUNCTIONS\\BRIDGE.LOL");
-            ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\FUNCTIONS\\CONSTANTS.LOL");
-            ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\SPECS\\CREATURE_TYPES.TXT");
-            ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\TEXT_PERMANENT\\CREATURE_TYPE_TEXT_TEST.XML");
-            ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\ART_ASSETS\\TEXTURES\\MANA\\CUSTOM_MANA.TDX");
-            ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\ART_ASSETS\\TEXTURES\\CARD_FRAMES\\CUSTOM_FRAME.TDX");
-            ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\ART_ASSETS\\FRONTEND\\CUSTOM_CHOICE.TDX");
-            ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\ART_ASSETS\\TEXTURES\\EFFECTS\\CUSTOM_EFFECT_TEXTURE.TDX");
+            ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\ART_ASSETS\\ILLUSTRATIONS\\10001.TDX");
+            ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\ART_ASSETS\\ILLUSTRATIONS\\10002.TDX");
+            ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\ART_ASSETS\\TEXTURES\\DECKS\\PORTABLE_DECK.TDX");
 
+            True(!paths.Any(path => path.Contains("\\FUNCTIONS\\", StringComparison.OrdinalIgnoreCase)),
+                "Shared FUNCTIONS must not be duplicated into every deck WAD.");
+            True(!paths.Any(path => path.Contains("\\SPECS\\", StringComparison.OrdinalIgnoreCase)),
+                "Shared SPECS must not be duplicated into every deck WAD.");
+            True(!paths.Any(path => path.Contains("\\TEXT_PERMANENT\\", StringComparison.OrdinalIgnoreCase)),
+                "Shared permanent text must not be duplicated into every deck WAD.");
+            True(!paths.Any(path => path.Contains("CUSTOM_MANA.TDX", StringComparison.OrdinalIgnoreCase)),
+                "Card-driven runtime assets belong to the shared runtime WAD.");
+            True(!paths.Any(path => path.Contains("CUSTOM_FRAME.TDX", StringComparison.OrdinalIgnoreCase)),
+                "Card-driven frame assets belong to the shared runtime WAD.");
+            True(!paths.Any(path => path.Contains("CUSTOM_EFFECT_TEXTURE.TDX", StringComparison.OrdinalIgnoreCase)),
+                "Card-driven effect assets belong to the shared runtime WAD.");
             True(!paths.Any(path => path.Contains("UNRELATED_REGISTRY.LOL", StringComparison.OrdinalIgnoreCase)),
-                "An unrelated LOL global registry must not become reachable from arbitrary CARD_V2 text.");
+                "The per-deck WAD must not receive the global function registry.");
             True(!paths.Any(path => path.Contains("DECOY_CARD.XML", StringComparison.OrdinalIgnoreCase)),
                 "Cards mentioned only by an unrelated runtime registry must not leak into the portable deck.");
             True(!paths.Any(path => path.Contains("10003.TDX", StringComparison.OrdinalIgnoreCase)),
@@ -198,17 +211,37 @@ internal static class PortableRuntimeChecks
             True(!paths.Any(path => path.Contains("UNUSED_EFFECT.TDX", StringComparison.OrdinalIgnoreCase)),
                 "Unreferenced heavy textures must not be copied just because they exist in the workspace.");
             True(!paths.Any(path => path.Contains("\\DECKS\\FOREIGN_DECK.XML", StringComparison.OrdinalIgnoreCase)),
-                "Portable card runtime must not import foreign decks.");
+                "Portable card payload must not import foreign decks.");
             True(!paths.Any(path => path.Contains("\\UNLOCKS\\FOREIGN_UNLOCK.XML", StringComparison.OrdinalIgnoreCase)),
-                "Portable card runtime must not import foreign unlocks.");
+                "Portable card payload must not import foreign unlocks.");
             True(!paths.Any(path => path.Contains("\\AI_PERSONALITIES\\FOREIGN_AI.XML", StringComparison.OrdinalIgnoreCase)),
-                "Portable card runtime must not import foreign AI personalities.");
+                "Portable card payload must not import foreign AI personalities.");
+
+            HashSet<string> sharedPaths = WadPaths(result.SharedRuntimeWadPath);
+            ContainsSuffix(sharedPaths, "\\DATA_ALL_PLATFORMS\\FUNCTIONS\\BRIDGE.LOL");
+            ContainsSuffix(sharedPaths, "\\DATA_ALL_PLATFORMS\\FUNCTIONS\\CONSTANTS.LOL");
+            ContainsSuffix(sharedPaths, "\\DATA_ALL_PLATFORMS\\SPECS\\CREATURE_TYPES.TXT");
+            ContainsSuffix(sharedPaths, "\\DATA_ALL_PLATFORMS\\TEXT_PERMANENT\\CREATURE_TYPE_TEXT_TEST.XML");
+            ContainsSuffix(sharedPaths, "\\DATA_ALL_PLATFORMS\\ART_ASSETS\\TEXTURES\\MANA\\CUSTOM_MANA.TDX");
+            ContainsSuffix(sharedPaths, "\\DATA_ALL_PLATFORMS\\ART_ASSETS\\TEXTURES\\CARD_FRAMES\\CUSTOM_FRAME.TDX");
+            ContainsSuffix(sharedPaths, "\\DATA_ALL_PLATFORMS\\ART_ASSETS\\FRONTEND\\CUSTOM_CHOICE.TDX");
+            ContainsSuffix(sharedPaths, "\\DATA_ALL_PLATFORMS\\ART_ASSETS\\TEXTURES\\EFFECTS\\CUSTOM_EFFECT_TEXTURE.TDX");
+            True(!sharedPaths.Any(path => path.Contains("\\CARDS\\ROOT_CARD.XML", StringComparison.OrdinalIgnoreCase)),
+                "The shared runtime must not duplicate CARD_V2 payloads.");
+            True(!sharedPaths.Any(path => path.Contains("\\ART_ASSETS\\ILLUSTRATIONS\\10001.TDX", StringComparison.OrdinalIgnoreCase)),
+                "The shared runtime must not duplicate normal card illustrations.");
 
             string provenance = File.ReadAllText(result.SourcesPath);
-            True(provenance.Contains("runtimeResourceCount", StringComparison.Ordinal),
-                "Portable runtime provenance count must be written.");
-            True(provenance.Contains("runtimeResourceCounts", StringComparison.Ordinal),
-                "Portable runtime provenance breakdown must be written.");
+            True(provenance.Contains("\"formatVersion\": 4", StringComparison.Ordinal),
+                "Portable provenance must record the shared-runtime contract format.");
+            True(provenance.Contains("\"sharedRuntime\"", StringComparison.Ordinal),
+                "Portable provenance must identify the shared runtime used by the deck.");
+            True(provenance.Contains("\"resolvedRuntimeResourceCount\"", StringComparison.Ordinal),
+                "Portable provenance must record the full resolved runtime closure before deduplication.");
+            True(provenance.Contains("\"runtimeResourceCount\": 1", StringComparison.Ordinal),
+                "Portable provenance must record only the deck-specific runtime payload copied into the support WAD.");
+            True(provenance.Contains("\"order\": 41", StringComparison.Ordinal),
+                "The deck support WAD must load after the shared runtime instead of using a fixed order.");
             True(provenance.Contains("HELPER_TOKEN", StringComparison.Ordinal),
                 "Runtime-discovered MULTIVERSEID dependency must be recorded through its canonical card closure.");
             True(!provenance.Contains("DECOY_CARD", StringComparison.Ordinal),
