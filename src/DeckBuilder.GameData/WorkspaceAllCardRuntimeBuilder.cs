@@ -72,6 +72,7 @@ public sealed class WorkspaceAllCardRuntimeBuilder
         Report(progress, 4, "Общий runtime", $"Склеиваю полный runtime workspace для {cardRootCount:N0} CARD_V2…");
         WorkspaceMergedRuntimeCatalogSnapshot catalog = WorkspaceMergedRuntimeCatalog.Load(
             workspace,
+            scan,
             warnings,
             warningKeys,
             cancellationToken);
@@ -87,7 +88,7 @@ public sealed class WorkspaceAllCardRuntimeBuilder
                 ? $" and {catalog.MissingCwTokenKeys.Count - 20:N0} more"
                 : string.Empty;
             string warning =
-                $"The workspace contains CARD_V2 definitions for CW_Tokens archetypes not present in the effective CW_TOKENS runtime: {shown}{more}. " +
+                $"The effective CARD_V2 set uses CW_Tokens archetypes not present in the selected CW_TOKENS runtime: {shown}{more}. " +
                 "The global runtime was still built; packaging a deck that actually uses one of these incompatible archetypes will fail explicitly.";
             if (warningKeys.Add(warning))
                 warnings.Add(warning);
