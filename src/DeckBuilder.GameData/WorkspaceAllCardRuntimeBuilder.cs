@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 
 namespace DeckBuilder.GameData;
@@ -12,39 +13,13 @@ public sealed record WorkspaceAllCardRuntimeBuildResult(
     IReadOnlyList<string> Warnings);
 
 /// <summary>
-/// Builds one shared runtime WAD for every effective CARD_V2 in an extracted workspace.
-/// Cards and normal illustrations are deliberately excluded. Unlike per-deck portable packaging,
-/// the shared WAD is intentionally conservative: all common card-logic trees are included in full,
-/// while static dependency analysis is used to add concrete assets referenced by cards/functions.
+/// Builds one complete shared runtime WAD for an extracted workspace. Every effective non-card
+/// runtime resource is included once. Duplicate paths from multiple source WADs are collapsed by
+/// the merged runtime catalog, so per-deck packaging no longer has to guess which mechanics/assets
+/// a card might reach dynamically.
 /// </summary>
 public sealed class WorkspaceAllCardRuntimeBuilder
 {
-    private const int CardBatchSize = 48;
-
-    // These trees are small/shared runtime data and frequently contain dynamic lookups that cannot
-    // be proven with static analysis (for example creature-type text tables assembled at runtime).
-    // A global runtime WAD is built once, so completeness is more important here than per-deck minimality.
-    private static readonly string[] SharedRuntimeTrees =
-    {
-        "FUNCTIONS",
-        "SPECS",
-        "TEXT_PERMANENT"
-    };
-
-    // Version workspaces can contain editor/source-control files inside otherwise valid runtime trees.
-    // Keep the conservative whole-tree policy, but only for formats the game can actually consume.
-    private static readonly HashSet<string> SharedRuntimeGameExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".LOL",
-        ".LUA",
-        ".TXT",
-        ".XML",
-        ".BSF",
-        ".CSV",
-        ".INI",
-        ".JSON"
-    };
-
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
     private readonly UnpackedContentWadBuilder _wadBuilder = new();
 
@@ -82,160 +57,102 @@ public sealed class WorkspaceAllCardRuntimeBuilder
             ?? throw new DirectoryNotFoundException("The runtime WAD output directory is missing.");
         Directory.CreateDirectory(outputDirectory);
 
-        int sourceMaxOrder = FindHighestWorkspaceWadOrder(workspace, cancellationToken);
-        if (sourceMaxOrder == int.MaxValue)
-            throw new InvalidDataException("The workspace contains a WAD with the maximum possible order; the shared runtime cannot be placed after it safely.");
-        int effectiveOrder = Math.Max(order, sourceMaxOrder + 1);
+        int cardRootCount = scan.CardVariants
+            .Select(variant => variant.Reference)
+            .Where(reference => !string.IsNullOrWhiteSpace(reference))
+            .Select(reference => reference.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+        if (cardRootCount == 0)
+            throw new InvalidDataException("The workspace does not contain any effective CARD_V2 definitions.");
 
         List<string> warnings = new();
         HashSet<string> warningKeys = new(StringComparer.OrdinalIgnoreCase);
 
-        Report(progress, 3, "Общий runtime", $"Строю эффективный индекс CARD_V2; WAD order {effectiveOrder} (исходный максимум {sourceMaxOrder})…");
-        WorkspaceCardIndex cardIndex = WorkspaceCardIndex.Create(scan);
-        WorkspaceContentVariant[] effectiveCards = scan.CardVariants
-            .Where(variant => !string.IsNullOrWhiteSpace(variant.Reference))
-            .Select(variant => variant.Reference.Trim())
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Select(reference => cardIndex.TryResolve(reference, selections: null, out WorkspaceContentVariant variant)
-                ? variant
-                : null)
-            .Where(variant => variant is not null)
-            .Cast<WorkspaceContentVariant>()
-            .OrderBy(variant => variant.Reference, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-
-        if (effectiveCards.Length == 0)
-            throw new InvalidDataException("The workspace does not contain any effective CARD_V2 definitions.");
-
-        cancellationToken.ThrowIfCancellationRequested();
-        Report(progress, 9, "Общий runtime", $"Индексирую runtime workspace для {effectiveCards.Length:N0} CARD_V2…");
-        WorkspacePortableRuntimeIndex runtimeIndex = WorkspacePortableRuntimeIndex.Load(
+        Report(progress, 4, "Общий runtime", $"Склеиваю полный runtime workspace для {cardRootCount:N0} CARD_V2…");
+        WorkspaceMergedRuntimeCatalogSnapshot catalog = WorkspaceMergedRuntimeCatalog.Load(
             workspace,
             warnings,
             warningKeys,
             cancellationToken);
-        if (runtimeIndex.IsEmpty)
-            throw new InvalidDataException("No DATA_ALL_PLATFORMS runtime resources were found in the extracted workspace.");
+        if (catalog.ResourceCount == 0)
+            throw new InvalidDataException("No shared DATA_ALL_PLATFORMS runtime resources were found in the extracted workspace.");
+        if (catalog.SourceMaxOrder == int.MaxValue)
+            throw new InvalidDataException("The workspace contains a WAD with the maximum possible order; the shared runtime cannot be placed after it safely.");
 
-        Report(progress, 12, "Общий runtime", "Собираю полные FUNCTIONS / SPECS / TEXT_PERMANENT…");
-        HashSet<string> sharedRuntimePaths = LoadSharedRuntimePaths(
-            workspace,
-            warnings,
-            warningKeys,
-            cancellationToken);
-
-        int functionCount = sharedRuntimePaths.Count(path => StartsWithTree(path, "FUNCTIONS"));
-        int specsCount = sharedRuntimePaths.Count(path => StartsWithTree(path, "SPECS"));
-        int permanentTextCount = sharedRuntimePaths.Count(path => StartsWithTree(path, "TEXT_PERMANENT"));
-
-        if (functionCount == 0)
-            throw new InvalidDataException("The workspace contains no FUNCTIONS runtime tree; a complete shared card runtime cannot be built.");
-        if (specsCount == 0)
-            throw new InvalidDataException("The workspace contains no SPECS runtime tree; a complete shared card runtime cannot be built.");
-        if (permanentTextCount == 0)
+        if (catalog.MissingCwTokenKeys.Count > 0)
         {
+            string shown = string.Join(", ", catalog.MissingCwTokenKeys.Take(20));
+            string more = catalog.MissingCwTokenKeys.Count > 20
+                ? $" и ещё {catalog.MissingCwTokenKeys.Count - 20:N0}"
+                : string.Empty;
             throw new InvalidDataException(
-                "The workspace contains no TEXT_PERMANENT runtime resources. " +
-                "The shared runtime would be incomplete for mechanics that resolve text dynamically (for example creature-type selection). " +
-                "Re-extract/refresh the workspace before building the global runtime WAD.");
+                $"The merged runtime cannot cover CW_Tokens archetypes used by the workspace: {shown}{more}. " +
+                "Refresh/re-extract the matching Community WAD runtime before packaging.");
         }
 
-        // Every CARD_V2 in the workspace is already a root. Runtime-discovered card references do not
-        // need to expand the card closure here, so an empty alias map intentionally disables that path.
-        IReadOnlyDictionary<string, string> noCardAliases =
-            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        int effectiveOrder = Math.Max(order, catalog.SourceMaxOrder + 1);
+        string[] runtimePaths = catalog.Resources
+            .Select(resource => resource.RelativePath)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        IReadOnlyDictionary<string, int> resourceCounts = BuildResourceCounts(runtimePaths);
 
-        // Full shared logic/text trees are the baseline. Dependency analysis only has to add concrete
-        // assets outside those trees (TDX/CNT/BIK/SOUND/etc.). Normal card illustrations stay per-deck.
-        HashSet<string> runtimePaths = new(sharedRuntimePaths, StringComparer.OrdinalIgnoreCase);
-        int processedCards = 0;
+        int functionCount = CountGroup(resourceCounts, "FUNCTIONS");
+        int specsCount = CountGroup(resourceCounts, "SPECS");
+        int permanentTextCount = CountGroup(resourceCounts, "TEXT_PERMANENT");
+        if (functionCount == 0)
+            throw new InvalidDataException("The workspace contains no FUNCTIONS runtime tree; a complete shared runtime cannot be built.");
+        if (specsCount == 0)
+            throw new InvalidDataException("The workspace contains no SPECS runtime tree; a complete shared runtime cannot be built.");
+        if (permanentTextCount == 0)
+            throw new InvalidDataException("The workspace contains no TEXT_PERMANENT runtime tree; a complete shared runtime cannot be built.");
 
         Report(
             progress,
-            15,
-            "Общий runtime",
-            $"Общие деревья: FUNCTIONS {functionCount:N0}, SPECS {specsCount:N0}, TEXT_PERMANENT {permanentTextCount:N0}. Ищу внешние assets…");
+            18,
+            "Полный merged runtime",
+            $"Эффективных ресурсов: {catalog.ResourceCount:N0}. FUNCTIONS {functionCount:N0}, SPECS {specsCount:N0}, TEXT_PERMANENT {permanentTextCount:N0}.");
 
-        void ResolveBatch(IReadOnlyList<WorkspaceContentVariant> cards)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
-            {
-                WorkspacePortableRuntimeResolution resolution = runtimeIndex.Resolve(
-                    cards.Select(card => card.StoragePath),
-                    rootIdentifiers: null,
-                    noCardAliases,
-                    warnings,
-                    warningKeys,
-                    cancellationToken);
-
-                foreach (string path in resolution.ResourcePaths)
-                {
-                    // Illustrations belong to per-deck/card payloads, not to the shared runtime WAD.
-                    if (!StartsWithTree(path, "ART_ASSETS\\ILLUSTRATIONS"))
-                        runtimePaths.Add(path);
-                }
-
-                processedCards += cards.Count;
-                int percent = 17 + (int)Math.Round(46d * processedCards / effectiveCards.Length);
-                Report(
-                    progress,
-                    Math.Clamp(percent, 17, 63),
-                    "Анализ всех карт",
-                    $"{processedCards:N0}/{effectiveCards.Length:N0} CARD_V2; runtime-ресурсов: {runtimePaths.Count:N0}");
-            }
-            catch (InvalidDataException) when (cards.Count > 1)
-            {
-                // A mixed batch can exceed the normal per-deck safety ceiling even when each card is
-                // individually valid. Split recursively; a single-card overflow is still a real error.
-                int middle = cards.Count / 2;
-                ResolveBatch(cards.Take(middle).ToArray());
-                ResolveBatch(cards.Skip(middle).ToArray());
-            }
-            catch (InvalidDataException exception) when (cards.Count == 1)
-            {
-                throw new InvalidDataException(
-                    $"Runtime closure for CARD_V2 '{cards[0].Reference}' is abnormal: {exception.Message}",
-                    exception);
-            }
-        }
-
-        for (int offset = 0; offset < effectiveCards.Length; offset += CardBatchSize)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            ResolveBatch(effectiveCards.Skip(offset).Take(CardBatchSize).ToArray());
-        }
-
-        if (runtimePaths.Count == 0)
-            throw new InvalidDataException("No runtime dependencies were discovered from the workspace CARD_V2 definitions.");
-
-        string[] sortedRuntimePaths = runtimePaths
-            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        IReadOnlyDictionary<string, int> resourceCounts = BuildResourceCounts(sortedRuntimePaths);
-        WorkspacePortableRuntimeResolution allRuntime = new(
-            sortedRuntimePaths,
-            resourceCounts,
-            Array.Empty<string>(),
-            Array.Empty<string>());
-
-        string staging = Path.Combine(outputDirectory, $".workspace-all-runtime-{Guid.NewGuid():N}");
+        string staging = Path.Combine(outputDirectory, $".workspace-full-runtime-{Guid.NewGuid():N}");
         Directory.CreateDirectory(staging);
         try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            Report(progress, 68, "Подготовка runtime", $"Копирую {sortedRuntimePaths.Length:N0} runtime-ресурсов…");
-            runtimeIndex.CopyIntoStaging(staging, allRuntime, cancellationToken);
-
-            int stagedFileCount = Directory.EnumerateFiles(staging, "*", SearchOption.AllDirectories).Count();
-            if (stagedFileCount != sortedRuntimePaths.Length)
+            int copied = 0;
+            foreach (WorkspaceMergedRuntimeResource resource in catalog.Resources)
             {
-                throw new InvalidDataException(
-                    $"Shared runtime staging contains {stagedFileCount:N0} files, but {sortedRuntimePaths.Length:N0} effective resources were expected. " +
-                    "The workspace runtime index is inconsistent; packaging was stopped.");
+                cancellationToken.ThrowIfCancellationRequested();
+                string target = Path.Combine(
+                    staging,
+                    "DATA_ALL_PLATFORMS",
+                    resource.RelativePath.Replace('\\', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                File.Copy(resource.StoragePath, target, overwrite: true);
+
+                copied++;
+                if (copied % 128 == 0 || copied == catalog.ResourceCount)
+                {
+                    int percent = 18 + (int)Math.Round(52d * copied / catalog.ResourceCount);
+                    Report(
+                        progress,
+                        Math.Clamp(percent, 18, 70),
+                        "Копирование полного runtime",
+                        $"{copied:N0}/{catalog.ResourceCount:N0} ресурсов…");
+                }
             }
 
-            Report(progress, 78, "Сборка общего Runtime WAD", $"Упаковываю {sortedRuntimePaths.Length:N0} ресурсов с order {effectiveOrder}…");
+            int stagedFileCount = Directory.EnumerateFiles(staging, "*", SearchOption.AllDirectories).Count();
+            if (stagedFileCount != catalog.ResourceCount)
+            {
+                throw new InvalidDataException(
+                    $"Merged runtime staging contains {stagedFileCount:N0} files, but {catalog.ResourceCount:N0} effective resources were expected.");
+            }
+
+            Report(
+                progress,
+                74,
+                "Сборка полного Runtime WAD",
+                $"Упаковываю {catalog.ResourceCount:N0} склеенных ресурсов с order {effectiveOrder}…");
             UnpackedContentBuildResult wadResult = _wadBuilder.Build(
                 new UnpackedContentBuildOptions(
                     staging,
@@ -244,33 +161,40 @@ public sealed class WorkspaceAllCardRuntimeBuilder
                     effectiveOrder),
                 cancellationToken);
 
+            string wadSha256 = HashFile(output);
             string manifestPath = output + ".runtime.json";
-            Report(progress, 96, "Проверка", "WAD проверен. Записываю состав runtime…");
+            Report(progress, 95, "Проверка", "WAD проверен. Записываю fingerprint полного runtime…");
             File.WriteAllText(manifestPath, JsonSerializer.Serialize(new
             {
-                formatVersion = 3,
+                formatVersion = WorkspaceSharedRuntimeContract.ManifestFormatVersion,
+                coverageMode = WorkspaceMergedRuntimeCatalog.CoverageMode,
                 createdUtc = DateTime.UtcNow,
                 workspace,
                 wad = output,
+                wadSha256,
+                workspaceRuntimeFingerprint = catalog.Fingerprint,
                 requestedOrder = order,
-                sourceMaxOrder,
+                sourceMaxOrder = catalog.SourceMaxOrder,
                 order = effectiveOrder,
-                cardRootCount = effectiveCards.Length,
-                sharedRuntimeTrees = SharedRuntimeTrees,
-                sharedRuntimeResourceCount = sharedRuntimePaths.Count,
-                dependencyResolvedResourceCount = sortedRuntimePaths.Length - sharedRuntimePaths.Count,
-                runtimeResourceCount = sortedRuntimePaths.Length,
+                cardRootCount,
+                sharedRuntimeTrees = new[] { "FUNCTIONS", "SPECS", "TEXT_PERMANENT", "ALL_SHARED_RUNTIME" },
+                runtimeResourceCount = catalog.ResourceCount,
                 runtimeResourceCounts = resourceCounts,
-                resources = sortedRuntimePaths,
+                excludedTrees = new[] { "CARDS", "DECKS", "UNLOCKS", "ART_ASSETS\\ILLUSTRATIONS" },
+                resources = runtimePaths,
                 warnings
             }, JsonOptions));
 
-            Report(progress, 100, "Готово", $"Общий runtime: {sortedRuntimePaths.Length:N0} ресурсов для {effectiveCards.Length:N0} CARD_V2; order {effectiveOrder}.");
+            Report(
+                progress,
+                100,
+                "Готово",
+                $"Полный merged runtime: {catalog.ResourceCount:N0} ресурсов для {cardRootCount:N0} CARD_V2; order {effectiveOrder}.");
             return new WorkspaceAllCardRuntimeBuildResult(
                 output,
                 manifestPath,
-                effectiveCards.Length,
-                sortedRuntimePaths.Length,
+                cardRootCount,
+                catalog.ResourceCount,
                 resourceCounts,
                 wadResult,
                 warnings);
@@ -282,108 +206,8 @@ public sealed class WorkspaceAllCardRuntimeBuilder
         }
     }
 
-    private static int FindHighestWorkspaceWadOrder(string workspace, CancellationToken cancellationToken)
-    {
-        int maxOrder = -1;
-        string[] manifests = Directory.EnumerateFiles(
-                workspace,
-                GameVersionPackageService.ManifestFileName,
-                SearchOption.AllDirectories)
-            .OrderBy(path => Path.GetDirectoryName(path), StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-
-        GameVersionPackageService packageService = new();
-        foreach (string manifestPath in manifests)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            DotpVersionPackageManifest manifest;
-            try
-            {
-                manifest = packageService.ReadManifest(Path.GetDirectoryName(manifestPath)!);
-            }
-            catch
-            {
-                continue;
-            }
-
-            foreach (DotpWadPackageManifest wad in manifest.Wads)
-                maxOrder = Math.Max(maxOrder, wad.PrimaryOrder);
-        }
-
-        return maxOrder;
-    }
-
-    private static HashSet<string> LoadSharedRuntimePaths(
-        string workspace,
-        ICollection<string> warnings,
-        ISet<string> warningKeys,
-        CancellationToken cancellationToken)
-    {
-        HashSet<string> paths = new(StringComparer.OrdinalIgnoreCase);
-        string[] manifests = Directory.EnumerateFiles(
-                workspace,
-                GameVersionPackageService.ManifestFileName,
-                SearchOption.AllDirectories)
-            .OrderBy(path => Path.GetDirectoryName(path), StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-
-        GameVersionPackageService packageService = new();
-        foreach (string manifestPath in manifests)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            string packageDirectory = Path.GetDirectoryName(manifestPath)!;
-            DotpVersionPackageManifest manifest;
-            try
-            {
-                manifest = packageService.ReadManifest(packageDirectory);
-            }
-            catch (Exception exception)
-            {
-                AddWarning(warnings, warningKeys, $"Could not read shared-runtime manifest {manifestPath}: {exception.Message}");
-                continue;
-            }
-
-            foreach (DotpWadPackageManifest wad in manifest.Wads)
-            {
-                string wadDirectory = Path.Combine(packageDirectory, "wads", SafeDirectoryName(wad.Name));
-                foreach (DotpWadFileManifest file in wad.Files)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    string? relativePath = GetAllPlatformsRelativePath(file.ArchivePath);
-                    if (relativePath is null
-                        || !SharedRuntimeTrees.Any(tree => StartsWithTree(relativePath, tree))
-                        || !IsSharedRuntimeGameFile(relativePath))
-                    {
-                        continue;
-                    }
-
-                    string storagePath = Path.Combine(wadDirectory, file.StoragePath.Replace('/', Path.DirectorySeparatorChar));
-                    if (!File.Exists(storagePath))
-                    {
-                        AddWarning(
-                            warnings,
-                            warningKeys,
-                            $"Shared runtime payload {relativePath} from {manifest.VersionName} / {wad.Name} is missing from the workspace.");
-                        continue;
-                    }
-
-                    paths.Add(relativePath);
-                }
-            }
-        }
-
-        return paths;
-    }
-
-    private static bool IsSharedRuntimeGameFile(string relativePath)
-    {
-        string normalized = relativePath.Replace('/', '\\');
-        string[] parts = normalized.Split('\\', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Any(part => part.StartsWith('.', StringComparison.Ordinal)))
-            return false;
-
-        return SharedRuntimeGameExtensions.Contains(Path.GetExtension(normalized));
-    }
+    private static int CountGroup(IReadOnlyDictionary<string, int> counts, string key) =>
+        counts.TryGetValue(key, out int count) ? count : 0;
 
     private static IReadOnlyDictionary<string, int> BuildResourceCounts(IEnumerable<string> paths) =>
         paths.GroupBy(GetResourceGroup, StringComparer.OrdinalIgnoreCase)
@@ -408,33 +232,11 @@ public sealed class WorkspaceAllCardRuntimeBuilder
         return parts[0];
     }
 
-    private static string? GetAllPlatformsRelativePath(string archivePath)
+    private static string HashFile(string path)
     {
-        string normalized = archivePath.Replace('/', '\\');
-        const string marker = "DATA_ALL_PLATFORMS\\";
-        int index = normalized.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
-        return index < 0 ? null : normalized[(index + marker.Length)..];
+        using FileStream input = File.OpenRead(path);
+        return Convert.ToHexString(SHA256.HashData(input));
     }
-
-    private static string SafeDirectoryName(string value)
-    {
-        char[] invalid = Path.GetInvalidFileNameChars();
-        string safe = new(value.Select(character => invalid.Contains(character) ? '_' : character).ToArray());
-        return safe.Trim().TrimEnd('.');
-    }
-
-    private static void AddWarning(
-        ICollection<string> warnings,
-        ISet<string> warningKeys,
-        string warning)
-    {
-        if (warningKeys.Add(warning))
-            warnings.Add(warning);
-    }
-
-    private static bool StartsWithTree(string path, string tree) =>
-        path.Equals(tree, StringComparison.OrdinalIgnoreCase)
-        || path.StartsWith(tree + "\\", StringComparison.OrdinalIgnoreCase);
 
     private static void Report(
         IProgress<WorkspaceSelectedCardsProgress>? progress,
