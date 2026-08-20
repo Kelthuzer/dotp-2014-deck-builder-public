@@ -1,0 +1,25 @@
+name: Feature package restore check
+
+on:
+  push:
+    branches:
+      - fix/package-restore-compact-auto-lands
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Core checks
+        run: dotnet run --project tests\DeckBuilder.Core.Checks\DeckBuilder.Core.Checks.csproj --configuration Release
+      - name: Modern checks
+        run: dotnet run --project tests\DeckBuilder.Modern.Checks\DeckBuilder.Modern.Checks.csproj --configuration Release
+      - name: Release build
+        run: dotnet build src\DeckBuilder.Modern\DeckBuilder.Modern.csproj --configuration Release --no-restore
