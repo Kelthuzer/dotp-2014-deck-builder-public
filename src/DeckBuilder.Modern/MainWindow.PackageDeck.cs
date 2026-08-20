@@ -160,10 +160,9 @@ public partial class MainWindow
         AppSettingsService.Current.WadOutputDirectory = outputDirectory;
         AppSettingsService.Save();
 
-        string codeName = SanitizeWadCodeName(wizard.DeckName);
         string supportWadPath = Path.Combine(
             outputDirectory,
-            $"Data_DLC_9000_{wizard.DeckUid}_{codeName}_Cards.wad");
+            $"Data_DLC_9000_{wizard.DeckUid}_Cards.wad");
         string coverMode = string.IsNullOrWhiteSpace(wizard.CustomCoverSourcePath)
             ? "игровая"
             : $"своя ({Path.GetFileName(wizard.CustomCoverSourcePath)}, рубашка {wizard.CustomCoverSkin})";
