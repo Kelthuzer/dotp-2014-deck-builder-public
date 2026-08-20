@@ -6,6 +6,9 @@ internal static class DeckDefaultPersonalityChecks
     [ModuleInitializer]
     internal static void Initialize()
     {
+        if (!DeckDocument.DefaultPersonality.Equals("D14_DEFAULT_PERSONALITY.XML", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("The built-in fallback must reference the stock D14 default personality that exists in the game data.");
+
         DeckDocument deck = new();
         if (!deck.Personality.Equals(DeckDocument.DefaultPersonality, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("A new deck must always have a built-in AI personality.");

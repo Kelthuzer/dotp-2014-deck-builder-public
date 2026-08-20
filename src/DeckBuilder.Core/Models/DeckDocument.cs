@@ -3,7 +3,7 @@ namespace DeckBuilder.Core.Models;
 public sealed class DeckDocument
 {
     public const int MaximumPromoUnlocks = 10;
-    public const string DefaultPersonality = "D14_SISTERS.XML";
+    public const string DefaultPersonality = "D14_DEFAULT_PERSONALITY.XML";
 
     private string _personality = DefaultPersonality;
 
