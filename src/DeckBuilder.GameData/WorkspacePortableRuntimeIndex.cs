@@ -22,12 +22,10 @@ internal sealed record WorkspacePortableRuntimeResolution(
 /// Concrete files, declared LOL functions and LOL globals are separate namespaces. A bare word in
 /// CARD_V2/LOL code is never treated as an arbitrary file basename; doing that pulled unrelated
 /// animation binaries and textures into portable decks and produced gigabyte-scale WADs.
+/// Dependency closure is set-based, so there is no arbitrary resource/card-count ceiling.
 /// </summary>
 internal sealed class WorkspacePortableRuntimeIndex
 {
-    private const int MaxRuntimeDiscoveredCardReferences = 128;
-    private const int MaxSelectedRuntimeResources = 1024;
-
     private static readonly string[] ImplicitSharedResourcePaths =
     {
         "SPECS\\CREATURE_TYPES.TXT"
@@ -130,6 +128,36 @@ internal sealed class WorkspacePortableRuntimeIndex
         string workspace = Path.GetFullPath(workspaceDirectory);
         IReadOnlySet<string> workspaceCwTokenKeys =
             WorkspaceRuntimeCompatibility.ScanWorkspaceCwTokenKeys(workspace, cancellationToken);
+        return LoadCore(workspace, workspaceCwTokenKeys, warnings, warningKeys, cancellationToken);
+    }
+
+    public static WorkspacePortableRuntimeIndex Load(
+        string? workspaceDirectory,
+        WorkspaceContentVariantScanResult scan,
+        ICollection<string> warnings,
+        ISet<string> warningKeys,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(scan);
+        ArgumentNullException.ThrowIfNull(warnings);
+        ArgumentNullException.ThrowIfNull(warningKeys);
+
+        if (string.IsNullOrWhiteSpace(workspaceDirectory) || !Directory.Exists(workspaceDirectory))
+            return Empty();
+
+        string workspace = Path.GetFullPath(workspaceDirectory);
+        IReadOnlySet<string> workspaceCwTokenKeys =
+            WorkspaceRuntimeCompatibility.ScanEffectiveCardSetCwTokenKeys(scan, cancellationToken);
+        return LoadCore(workspace, workspaceCwTokenKeys, warnings, warningKeys, cancellationToken);
+    }
+
+    private static WorkspacePortableRuntimeIndex LoadCore(
+        string workspace,
+        IReadOnlySet<string> workspaceCwTokenKeys,
+        ICollection<string> warnings,
+        ISet<string> warningKeys,
+        CancellationToken cancellationToken)
+    {
         string[] manifests = Directory.EnumerateFiles(
                 workspace,
                 GameVersionPackageService.ManifestFileName,
@@ -243,12 +271,6 @@ internal sealed class WorkspacePortableRuntimeIndex
             return WorkspacePortableRuntimeResolution.Empty;
 
         HashSet<string> selectedPaths = _implicitSharedPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (selectedPaths.Count > MaxSelectedRuntimeResources)
-        {
-            throw new InvalidDataException(
-                $"The implicit portable runtime contains {selectedPaths.Count:N0} resources, exceeding the safety limit of {MaxSelectedRuntimeResources:N0}.");
-        }
-
         HashSet<string> cardReferences = new(StringComparer.OrdinalIgnoreCase);
         HashSet<string> missingRoots = new(StringComparer.OrdinalIgnoreCase);
         HashSet<string> scannedTextFiles = new(StringComparer.OrdinalIgnoreCase);
@@ -259,13 +281,6 @@ internal sealed class WorkspacePortableRuntimeIndex
         {
             if (!selectedPaths.Add(resource.RelativePath))
                 return;
-
-            if (selectedPaths.Count > MaxSelectedRuntimeResources)
-            {
-                throw new InvalidDataException(
-                    $"Portable runtime dependency closure exceeded {MaxSelectedRuntimeResources:N0} resources while adding {resource.RelativePath}. " +
-                    $"Dependency: {reason}. Packaging was stopped before producing an oversized WAD.");
-            }
 
             if (IsTextResource(resource) && queuedRuntimePaths.Add(resource.RelativePath))
                 pendingText.Enqueue(resource);
@@ -440,14 +455,7 @@ internal sealed class WorkspacePortableRuntimeIndex
         {
             if (!WorkspaceCardDependencyResolver.TryResolveReferenceAlias(token, cardAliases, out string cardReference))
                 return;
-            if (!cardReferences.Add(cardReference))
-                return;
-            if (cardReferences.Count > MaxRuntimeDiscoveredCardReferences)
-            {
-                throw new InvalidDataException(
-                    $"Portable runtime exposed more than {MaxRuntimeDiscoveredCardReferences} CARD_V2 references. " +
-                    "This usually means a shared card/token registry was treated as a deck dependency; packaging was stopped before producing an oversized WAD.");
-            }
+            cardReferences.Add(cardReference);
         }
 
         foreach (Match match in RuntimeCardAssignmentRegex.Matches(text))
