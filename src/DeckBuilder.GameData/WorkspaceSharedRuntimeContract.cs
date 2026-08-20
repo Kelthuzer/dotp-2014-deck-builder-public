@@ -64,6 +64,7 @@ internal static class WorkspaceSharedRuntimeContract
             HashSet<string> warningKeys = new(StringComparer.OrdinalIgnoreCase);
             catalog = WorkspaceMergedRuntimeCatalog.Load(
                 workspace,
+                scan,
                 warnings,
                 warningKeys,
                 cancellationToken);
