@@ -163,7 +163,10 @@ public sealed class WorkspaceAllCardRuntimeBuilder
                     effectiveOrder),
                 cancellationToken);
 
+            FileInfo wadInfo = new(output);
             string wadSha256 = HashFile(output);
+            long wadLength = wadInfo.Length;
+            long wadLastWriteUtcTicks = wadInfo.LastWriteTimeUtc.Ticks;
             string manifestPath = output + ".runtime.json";
             Report(progress, 95, "Проверка", "WAD проверен. Записываю fingerprint полного runtime…");
             File.WriteAllText(manifestPath, JsonSerializer.Serialize(new
@@ -174,6 +177,8 @@ public sealed class WorkspaceAllCardRuntimeBuilder
                 workspace,
                 wad = output,
                 wadSha256,
+                wadLength,
+                wadLastWriteUtcTicks,
                 workspaceRuntimeFingerprint = catalog.Fingerprint,
                 requestedOrder = order,
                 sourceMaxOrder = catalog.SourceMaxOrder,
