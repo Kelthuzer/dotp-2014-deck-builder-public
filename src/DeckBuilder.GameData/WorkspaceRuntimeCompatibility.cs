@@ -74,10 +74,35 @@ internal static class WorkspaceRuntimeCompatibility
     }
 
     /// <summary>
-    /// Scans only the CARD_V2 files that are actually effective for a build. This is intentionally
-    /// separate from the broad workspace scan: an extracted workspace can contain historical or
-    /// overridden copies of the same card, and those stale copies must not force the shared runtime
-    /// to satisfy token archetypes that the effective game content no longer uses.
+    /// Returns CW_Tokens requirements from exactly one effective CARD_V2 per reference. The winner
+    /// ordering is intentionally identical to WorkspaceCardIndex's default resolution so every
+    /// runtime subsystem agrees on which historical/overridden card version is active.
+    /// </summary>
+    public static IReadOnlySet<string> ScanEffectiveCardSetCwTokenKeys(
+        WorkspaceContentVariantScanResult scan,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(scan);
+
+        string[] effectiveCardPaths = scan.CardVariants
+            .Where(variant => !string.IsNullOrWhiteSpace(variant.Reference))
+            .GroupBy(variant => variant.Reference.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Select(group => group
+                .OrderBy(candidate => candidate.IsRecommended ? 1 : 0)
+                .ThenBy(candidate => candidate.WadOrder)
+                .ThenBy(candidate => candidate.WadName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(candidate => candidate.PackageName, StringComparer.OrdinalIgnoreCase)
+                .Last())
+            .Select(variant => variant.StoragePath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return ScanCardFilesCwTokenKeys(effectiveCardPaths, cancellationToken);
+    }
+
+    /// <summary>
+    /// Scans only the supplied CARD_V2 files. This is used for effective-set and per-deck checks so
+    /// stale copies elsewhere in a multi-version workspace cannot create false requirements.
     /// </summary>
     public static IReadOnlySet<string> ScanCardFilesCwTokenKeys(
         IEnumerable<string> cardPaths,
