@@ -31,15 +31,16 @@ internal static class PortableDeckPlannerChecks
         Require(!references.Any(reference => reference.Contains('#') || reference.Contains('@')),
             "Portable dependencies must use canonical CARD_V2 names, not deck #/@ modifiers.");
 
-        foreach (string land in new[] { "MOUNTAIN_001", "MOUNTAIN_002", "MOUNTAIN_003", "MOUNTAIN_004" })
-            Require(references.Contains(land, StringComparer.OrdinalIgnoreCase), $"Automatic land-pool dependency {land} is missing.");
-
+        Require(references.Contains("MOUNTAIN_001", StringComparer.OrdinalIgnoreCase),
+            "Automatic land-pool dependency MOUNTAIN_001 is missing.");
+        Require(references.Count(reference => reference.StartsWith("MOUNTAIN_", StringComparison.OrdinalIgnoreCase)) == 1,
+            "Repeated automatic lands should require one Mountain CARD_V2 instead of several art variants.");
         Require(!references.Contains("MOUNTAIN_005", StringComparer.OrdinalIgnoreCase),
-            "Portable planner must mirror the exporter's four-variant land-pool limit.");
+            "Portable planner must not pull unused Mountain variants into the support WAD.");
         Require(!references.Contains("FOREST_001", StringComparer.OrdinalIgnoreCase),
             "A red deck must not pull unrelated forest land-pool cards.");
 
-        Console.WriteLine("PASS: portable deck + unlock + land-pool reference planning");
+        Console.WriteLine("PASS: portable deck + unlock + compact land-pool reference planning");
     }
 
     private static CardRecord Card(string fileName, string castingCost, string typeLine = "Sorcery") => new(
