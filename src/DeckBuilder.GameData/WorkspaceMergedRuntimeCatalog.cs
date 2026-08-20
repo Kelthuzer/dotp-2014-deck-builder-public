@@ -55,6 +55,10 @@ internal static class WorkspaceMergedRuntimeCatalog
         ".TMP"
     };
 
+    /// <summary>
+    /// Broad compatibility overload retained for callers that do not already have a card scan.
+    /// It deliberately sees every CARD_V2 copy in the workspace.
+    /// </summary>
     public static WorkspaceMergedRuntimeCatalogSnapshot Load(
         string workspaceDirectory,
         ICollection<string> warnings,
@@ -62,15 +66,58 @@ internal static class WorkspaceMergedRuntimeCatalog
         CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(workspaceDirectory);
-        ArgumentNullException.ThrowIfNull(warnings);
-        ArgumentNullException.ThrowIfNull(warningKeys);
+        string workspace = Path.GetFullPath(workspaceDirectory);
+        IReadOnlySet<string> requiredCwTokenKeys =
+            WorkspaceRuntimeCompatibility.ScanWorkspaceCwTokenKeys(workspace, cancellationToken);
+        return LoadCore(workspace, requiredCwTokenKeys, warnings, warningKeys, cancellationToken);
+    }
+
+    /// <summary>
+    /// Preferred shared-runtime path. Token compatibility is calculated from exactly one effective
+    /// CARD_V2 per reference, using the same default winner ordering as portable deck resolution.
+    /// Historical/overridden copies therefore cannot make the common runtime look incomplete.
+    /// </summary>
+    public static WorkspaceMergedRuntimeCatalogSnapshot Load(
+        string workspaceDirectory,
+        WorkspaceContentVariantScanResult scan,
+        ICollection<string> warnings,
+        ISet<string> warningKeys,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(workspaceDirectory);
+        ArgumentNullException.ThrowIfNull(scan);
 
         string workspace = Path.GetFullPath(workspaceDirectory);
+        string[] effectiveCardPaths = scan.CardVariants
+            .Where(variant => !string.IsNullOrWhiteSpace(variant.Reference))
+            .GroupBy(variant => variant.Reference.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Select(group => group
+                .OrderBy(candidate => candidate.IsRecommended ? 1 : 0)
+                .ThenBy(candidate => candidate.WadOrder)
+                .ThenBy(candidate => candidate.WadName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(candidate => candidate.PackageName, StringComparer.OrdinalIgnoreCase)
+                .Last())
+            .Select(variant => variant.StoragePath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        IReadOnlySet<string> requiredCwTokenKeys =
+            WorkspaceRuntimeCompatibility.ScanCardFilesCwTokenKeys(effectiveCardPaths, cancellationToken);
+        return LoadCore(workspace, requiredCwTokenKeys, warnings, warningKeys, cancellationToken);
+    }
+
+    private static WorkspaceMergedRuntimeCatalogSnapshot LoadCore(
+        string workspace,
+        IReadOnlySet<string> workspaceCwTokenKeys,
+        ICollection<string> warnings,
+        ISet<string> warningKeys,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(warnings);
+        ArgumentNullException.ThrowIfNull(warningKeys);
         if (!Directory.Exists(workspace))
             throw new DirectoryNotFoundException(workspace);
 
-        IReadOnlySet<string> workspaceCwTokenKeys =
-            WorkspaceRuntimeCompatibility.ScanWorkspaceCwTokenKeys(workspace, cancellationToken);
         List<RuntimeCandidate> candidates = new();
         int sourceMaxOrder = -1;
 
