@@ -1,5 +1,8 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using Gibbed.Duels.FileFormats;
+using Gibbed.IO;
+using ICSharpCode.SharpZipLib.Zip.Compression.Streams;
 using Wad = Gibbed.Duels.FileFormats.Wad;
 
 namespace DeckBuilder.GameData;
@@ -50,6 +53,7 @@ internal static class WorkspaceSharedRuntimeContract
         ArgumentNullException.ThrowIfNull(scan);
 
         string wad = Path.GetFullPath(wadPath);
+        string workspace = Path.GetFullPath(workspaceDirectory);
         string manifestPath = wad + ".runtime.json";
         if (!File.Exists(wad) || new FileInfo(wad).Length == 0)
             return Invalid("общий runtime WAD отсутствует или пуст");
@@ -59,7 +63,7 @@ internal static class WorkspaceSharedRuntimeContract
         int currentSourceMaxOrder;
         try
         {
-            currentSourceMaxOrder = FindHighestWorkspaceWadOrder(workspaceDirectory, cancellationToken);
+            currentSourceMaxOrder = FindHighestWorkspaceWadOrder(workspace, cancellationToken);
         }
         catch (Exception exception)
         {
@@ -148,23 +152,23 @@ internal static class WorkspaceSharedRuntimeContract
                     $"manifest общего runtime объявляет {declaredResourceCount:N0} ресурсов, но перечисляет {resources.Count:N0}");
             }
 
-            HashSet<string> actualResources;
+            IReadOnlyDictionary<string, string> actualRuntimeHashes;
             try
             {
-                actualResources = ReadRuntimeResources(wad, cancellationToken);
+                actualRuntimeHashes = ReadRuntimeResourceHashes(wad, cancellationToken);
             }
             catch (Exception exception)
             {
                 return Invalid($"общий runtime WAD не читается: {exception.Message}");
             }
 
-            if (!resources.SetEquals(actualResources))
+            if (!resources.SetEquals(actualRuntimeHashes.Keys))
             {
                 string[] missingFromWad = resources
-                    .Where(resource => !actualResources.Contains(resource))
+                    .Where(resource => !actualRuntimeHashes.ContainsKey(resource))
                     .Take(8)
                     .ToArray();
-                string[] unexpectedInWad = actualResources
+                string[] unexpectedInWad = actualRuntimeHashes.Keys
                     .Where(resource => !resources.Contains(resource))
                     .Take(8)
                     .ToArray();
@@ -174,7 +178,40 @@ internal static class WorkspaceSharedRuntimeContract
                 if (unexpectedInWad.Length > 0)
                     details += $" лишние в WAD: {string.Join(", ", unexpectedInWad)};";
                 return Invalid(
-                    $"фактический состав runtime WAD ({actualResources.Count:N0}) не совпадает с manifest ({resources.Count:N0});{details}");
+                    $"фактический состав runtime WAD ({actualRuntimeHashes.Count:N0}) не совпадает с manifest ({resources.Count:N0});{details}");
+            }
+
+            IReadOnlyDictionary<string, WorkspaceRuntimeSource> currentSources;
+            try
+            {
+                currentSources = ResolveEffectiveWorkspaceResources(workspace, resources, cancellationToken);
+            }
+            catch (Exception exception)
+            {
+                return Invalid($"не удалось сверить runtime с текущим workspace: {exception.Message}");
+            }
+
+            string[] missingWorkspaceResources = resources
+                .Where(resource => !currentSources.ContainsKey(resource))
+                .Take(8)
+                .ToArray();
+            if (missingWorkspaceResources.Length > 0)
+            {
+                return Invalid(
+                    $"в текущем workspace больше нет runtime-ресурсов: {string.Join(", ", missingWorkspaceResources)}");
+            }
+
+            foreach (string resource in resources.OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                WorkspaceRuntimeSource source = currentSources[resource];
+                string workspaceHash = HashFile(source.StoragePath);
+                if (!actualRuntimeHashes[resource].Equals(workspaceHash, StringComparison.OrdinalIgnoreCase))
+                {
+                    return Invalid(
+                        $"runtime-ресурс {resource} отличается от текущего workspace " +
+                        $"({source.PackageName} / {source.WadName}, order {source.WadOrder})");
+                }
             }
 
             return new WorkspaceSharedRuntimeInspection(
@@ -222,7 +259,7 @@ internal static class WorkspaceSharedRuntimeContract
                 workspace,
                 GameVersionPackageService.ManifestFileName,
                 SearchOption.AllDirectories)
-            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(path => Path.GetDirectoryName(path), StringComparer.OrdinalIgnoreCase)
             .ToArray();
         GameVersionPackageService packageService = new();
         foreach (string manifestPath in manifests)
@@ -236,49 +273,144 @@ internal static class WorkspaceSharedRuntimeContract
         return maxOrder;
     }
 
-    private static HashSet<string> ReadRuntimeResources(
+    private static IReadOnlyDictionary<string, WorkspaceRuntimeSource> ResolveEffectiveWorkspaceResources(
+        string workspace,
+        IReadOnlySet<string> requiredResources,
+        CancellationToken cancellationToken)
+    {
+        List<WorkspaceRuntimeSource> candidates = new();
+        string[] manifests = Directory.EnumerateFiles(
+                workspace,
+                GameVersionPackageService.ManifestFileName,
+                SearchOption.AllDirectories)
+            .OrderBy(path => Path.GetDirectoryName(path), StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        GameVersionPackageService packageService = new();
+
+        foreach (string manifestPath in manifests)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string packageDirectory = Path.GetDirectoryName(manifestPath)!;
+            DotpVersionPackageManifest manifest = packageService.ReadManifest(packageDirectory);
+            foreach (DotpWadPackageManifest sourceWad in manifest.Wads)
+            {
+                string wadDirectory = Path.Combine(packageDirectory, "wads", SafeDirectoryName(sourceWad.Name));
+                foreach (DotpWadFileManifest file in sourceWad.Files)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    string? relativePath = GetAllPlatformsRelativePath(file.ArchivePath);
+                    if (relativePath is null || !requiredResources.Contains(relativePath))
+                        continue;
+
+                    string storagePath = Path.Combine(
+                        wadDirectory,
+                        file.StoragePath.Replace('/', Path.DirectorySeparatorChar));
+                    if (!File.Exists(storagePath))
+                        throw new FileNotFoundException($"Workspace runtime payload is missing: {relativePath}", storagePath);
+
+                    candidates.Add(new WorkspaceRuntimeSource(
+                        relativePath,
+                        manifest.VersionName,
+                        sourceWad.Name,
+                        sourceWad.PrimaryOrder,
+                        storagePath));
+                }
+            }
+        }
+
+        return candidates
+            .GroupBy(source => source.RelativePath, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group
+                .OrderBy(source => source.WadOrder)
+                .ThenBy(source => source.WadName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(source => source.PackageName, StringComparer.OrdinalIgnoreCase)
+                .Last())
+            .ToDictionary(source => source.RelativePath, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static IReadOnlyDictionary<string, string> ReadRuntimeResourceHashes(
         string wadPath,
         CancellationToken cancellationToken)
     {
         using FileStream input = File.OpenRead(wadPath);
+        if (WadFile.IsBadHeader(input, out _, out _, out string reason))
+            throw new InvalidDataException(reason);
+
+        input.Position = 0;
         WadFile wad = new();
         wad.Deserialize(input);
+        bool compressed = (wad.Flags & Wad.ArchiveFlags.HasCompressedFiles) != 0;
 
-        HashSet<string> resources = new(StringComparer.OrdinalIgnoreCase);
+        List<(string Path, Wad.FileEntry File)> files = new();
         foreach (Wad.DirectoryEntry directory in wad.Directories)
+            Collect(directory, directory.Name, files);
+
+        Dictionary<string, string> hashes = new(StringComparer.OrdinalIgnoreCase);
+        const string marker = "DATA_ALL_PLATFORMS\\";
+        foreach ((string archivePath, Wad.FileEntry file) in files)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            Collect(directory, directory.Name, resources, cancellationToken);
+            int markerIndex = archivePath.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (markerIndex < 0)
+                continue;
+
+            string relative = NormalizeResourcePath(archivePath[(markerIndex + marker.Length)..]);
+            if (relative.Length == 0)
+                continue;
+
+            byte[] data = ReadFile(input, wad, file, compressed);
+            if (!hashes.TryAdd(relative, Convert.ToHexString(SHA256.HashData(data))))
+                throw new InvalidDataException($"Duplicate runtime resource in WAD: {relative}");
         }
 
-        return resources;
+        return hashes;
     }
 
     private static void Collect(
         Wad.DirectoryEntry directory,
         string path,
-        ISet<string> output,
-        CancellationToken cancellationToken)
+        ICollection<(string Path, Wad.FileEntry File)> output)
     {
-        const string marker = "DATA_ALL_PLATFORMS\\";
         foreach (Wad.FileEntry file in directory.Files)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            string archivePath = $"{path}\\{file.Name}";
-            int markerIndex = archivePath.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
-            if (markerIndex < 0)
-                continue;
-
-            string relative = archivePath[(markerIndex + marker.Length)..];
-            if (!string.IsNullOrWhiteSpace(relative))
-                output.Add(NormalizeResourcePath(relative));
-        }
-
+            output.Add(($"{path}\\{file.Name}", file));
         foreach (Wad.DirectoryEntry child in directory.Directories)
+            Collect(child, $"{path}\\{child.Name}", output);
+    }
+
+    private static byte[] ReadFile(FileStream input, WadFile archive, Wad.FileEntry file, bool compressed)
+    {
+        input.Position = archive.DataOffsets[file.OffsetIndex];
+        if (!compressed)
+            return ReadExactly(input, checked((int)file.Size));
+
+        int inflatedLength = input.ReadValueS32(archive.Endian);
+        int storedLength = checked((int)file.Size) - 4;
+        if (inflatedLength == -1)
+            return ReadExactly(input, storedLength);
+
+        using MemoryStream compressedData = new(ReadExactly(input, storedLength), writable: false);
+        using InflaterInputStream inflater = new(compressedData);
+        return ReadExactly(inflater, inflatedLength);
+    }
+
+    private static byte[] ReadExactly(Stream input, int length)
+    {
+        byte[] result = new byte[length];
+        int offset = 0;
+        while (offset < result.Length)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            Collect(child, $"{path}\\{child.Name}", output, cancellationToken);
+            int read = input.Read(result, offset, result.Length - offset);
+            if (read == 0)
+                throw new EndOfStreamException($"Expected {length} bytes, received {offset}.");
+            offset += read;
         }
+        return result;
+    }
+
+    private static string HashFile(string path)
+    {
+        using FileStream input = File.OpenRead(path);
+        return Convert.ToHexString(SHA256.HashData(input));
     }
 
     private static int RequiredInt(JsonElement root, string propertyName)
@@ -293,10 +425,32 @@ internal static class WorkspaceSharedRuntimeContract
         return value;
     }
 
+    private static string? GetAllPlatformsRelativePath(string archivePath)
+    {
+        string normalized = archivePath.Replace('/', '\\');
+        const string marker = "DATA_ALL_PLATFORMS\\";
+        int index = normalized.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        return index < 0 ? null : NormalizeResourcePath(normalized[(index + marker.Length)..]);
+    }
+
     private static string NormalizeResourcePath(string? value) =>
         string.IsNullOrWhiteSpace(value)
             ? string.Empty
             : value.Trim().Replace('/', '\\');
 
+    private static string SafeDirectoryName(string value)
+    {
+        char[] invalid = Path.GetInvalidFileNameChars();
+        string safe = new(value.Select(character => invalid.Contains(character) ? '_' : character).ToArray());
+        return safe.Trim().TrimEnd('.');
+    }
+
     private static WorkspaceSharedRuntimeInspection Invalid(string reason) => new(null, reason);
+
+    private sealed record WorkspaceRuntimeSource(
+        string RelativePath,
+        string PackageName,
+        string WadName,
+        int WadOrder,
+        string StoragePath);
 }
