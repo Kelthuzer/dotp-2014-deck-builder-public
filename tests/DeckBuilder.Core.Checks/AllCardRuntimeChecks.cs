@@ -10,7 +10,7 @@ internal static class AllCardRuntimeChecks
     internal static void Initialize()
     {
         Run();
-        Console.WriteLine("PASS: shared all-card runtime completeness");
+        Console.WriteLine("PASS: complete merged shared runtime");
     }
 
     private static void Run()
@@ -75,7 +75,17 @@ internal static class AllCardRuntimeChecks
             AddPayload("TEXT_PERMANENT\\DYNAMIC_ONLY.XML", "<Workbook />");
             AddPayload("TEXT_PERMANENT\\.idea\\workspace.xml", "<project />");
             AddPayload("TEXT_PERMANENT\\TEXT_PERMANENT.iml", "<module />");
-            AddBinaryPayload("ART_ASSETS\\TEXTURES\\EFFECTS\\USED_EFFECT.TDX", [5, 6]);
+
+            // These are deliberately not referenced by ROOT. A complete merged runtime must still
+            // contain them, because dynamic scripts can reach assets that static dependency analysis
+            // cannot prove in advance.
+            AddBinaryPayload("ART_ASSETS\\TEXTURES\\EFFECTS\\UNREFERENCED_EFFECT.TDX", [5, 6]);
+            AddBinaryPayload("SOUNDS\\UNREFERENCED_SOUND.BNK", [7, 8, 9]);
+            AddPayload("AI_PERSONALITIES\\D14_SISTERS.XML", "<AI_PERSONALITY />");
+
+            // Deck/card payloads remain deck-specific and must not be merged into the shared runtime.
+            AddPayload("DECKS\\SHOULD_NOT_COPY.XML", "<DECK />");
+            AddPayload("UNLOCKS\\SHOULD_NOT_COPY.XML", "<UNLOCKS />");
 
             DotpVersionPackageManifest manifest = new(
                 GameVersionPackageService.CurrentFormatVersion,
@@ -130,7 +140,7 @@ internal static class AllCardRuntimeChecks
                 Array.Empty<WorkspaceContentVariantConflict>(),
                 [variant]);
 
-            string output = Path.Combine(root, "Data_DLC_8000_DeckBuilder_Runtime.wad");
+            string output = Path.Combine(root, WorkspaceSharedRuntimeContract.WadFileName);
             WorkspaceAllCardRuntimeBuildResult result = new WorkspaceAllCardRuntimeBuilder().Build(
                 output,
                 root,
@@ -145,11 +155,18 @@ internal static class AllCardRuntimeChecks
             ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\SPECS\\DYNAMIC_ONLY.TXT");
             ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\TEXT_PERMANENT\\CREATURE_TYPE_TEXT_TEST.XML");
             ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\TEXT_PERMANENT\\DYNAMIC_ONLY.XML");
+            ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\ART_ASSETS\\TEXTURES\\EFFECTS\\UNREFERENCED_EFFECT.TDX");
+            ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\SOUNDS\\UNREFERENCED_SOUND.BNK");
+            ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\AI_PERSONALITIES\\D14_SISTERS.XML");
 
             True(!paths.Any(path => path.Contains("\\CARDS\\ROOT.XML", StringComparison.OrdinalIgnoreCase)),
-                "Shared runtime WAD must not contain CARD_V2 payloads.");
+                "Shared runtime WAD must not contain normal CARD_V2 payloads.");
             True(!paths.Any(path => path.Contains("\\ART_ASSETS\\ILLUSTRATIONS\\10001.TDX", StringComparison.OrdinalIgnoreCase)),
                 "Shared runtime WAD must not contain normal card illustrations.");
+            True(!paths.Any(path => path.Contains("\\DECKS\\SHOULD_NOT_COPY.XML", StringComparison.OrdinalIgnoreCase)),
+                "Shared runtime WAD must not contain deck definitions.");
+            True(!paths.Any(path => path.Contains("\\UNLOCKS\\SHOULD_NOT_COPY.XML", StringComparison.OrdinalIgnoreCase)),
+                "Shared runtime WAD must not contain unlock definitions.");
             True(!paths.Any(path => path.EndsWith("_List Functions.ahk", StringComparison.OrdinalIgnoreCase)),
                 "Editor helper scripts must not be copied into the shared runtime WAD.");
             True(!paths.Any(path => path.Contains("\\.idea\\", StringComparison.OrdinalIgnoreCase)),
@@ -158,22 +175,39 @@ internal static class AllCardRuntimeChecks
                 "IDE module files must not be copied into the shared runtime WAD.");
 
             string runtimeManifest = File.ReadAllText(result.ManifestPath);
-            True(runtimeManifest.Contains("\"formatVersion\": 3", StringComparison.Ordinal),
-                "Shared runtime manifest must use format version 3.");
+            True(runtimeManifest.Contains("\"formatVersion\": 4", StringComparison.Ordinal),
+                "Complete merged runtime manifest must use format version 4.");
+            True(runtimeManifest.Contains("\"coverageMode\": \"all-effective-runtime-v1\"", StringComparison.Ordinal),
+                "Complete merged runtime manifest must declare full coverage mode.");
             True(runtimeManifest.Contains("\"requestedOrder\": 40", StringComparison.Ordinal),
                 "Shared runtime manifest must preserve the requested order floor.");
             True(runtimeManifest.Contains("\"sourceMaxOrder\": 90", StringComparison.Ordinal),
                 "Shared runtime manifest must record the highest source WAD order.");
             True(runtimeManifest.Contains("\"order\": 91", StringComparison.Ordinal),
                 "Shared runtime must load after every source WAD instead of using a fixed low order.");
-            True(runtimeManifest.Contains("TEXT_PERMANENT", StringComparison.Ordinal),
-                "Shared runtime manifest must record the complete permanent-text tree.");
+            True(runtimeManifest.Contains("workspaceRuntimeFingerprint", StringComparison.Ordinal),
+                "Merged runtime manifest must carry a workspace fingerprint.");
+            True(runtimeManifest.Contains("wadSha256", StringComparison.Ordinal),
+                "Merged runtime manifest must carry the built WAD hash.");
+
             True(result.RuntimeResourceCounts.TryGetValue("FUNCTIONS", out int functions) && functions == 2,
-                "The full FUNCTIONS game-runtime tree must be included, not only statically reachable functions.");
+                "The full FUNCTIONS tree must be included.");
             True(result.RuntimeResourceCounts.TryGetValue("SPECS", out int specs) && specs == 2,
-                "The full SPECS game-runtime tree must be included.");
+                "The full SPECS tree must be included.");
             True(result.RuntimeResourceCounts.TryGetValue("TEXT_PERMANENT", out int text) && text == 2,
                 "The full TEXT_PERMANENT game-runtime tree must be included while editor metadata is excluded.");
+            True(result.RuntimeResourceCounts.TryGetValue("SOUNDS", out int sounds) && sounds == 1,
+                "Unreferenced shared sound resources must be included by the full merged runtime.");
+            True(result.RuntimeResourceCounts.TryGetValue("AI_PERSONALITIES", out int personalities) && personalities == 1,
+                "AI personalities must be included by the full merged runtime.");
+
+            WorkspaceSharedRuntimeInspection inspection = WorkspaceSharedRuntimeContract.Inspect(
+                output,
+                root,
+                scan,
+                default);
+            True(inspection.IsUsable,
+                $"Fresh full merged runtime must pass the shared-runtime contract: {inspection.Reason}");
         }
         finally
         {
