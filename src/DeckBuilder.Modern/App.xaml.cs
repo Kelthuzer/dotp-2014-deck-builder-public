@@ -40,6 +40,7 @@ public partial class App : Application
             mainWindow.InstallPreviewVisibilityGuard();
             mainWindow.InstallConfiguredDataPaths();
             AppLocalization.Apply(mainWindow);
+            mainWindow.InstallPackageRestoreAndCompactLands();
             AppThemeService.ApplyCurrent();
             mainWindow.UpdateDeckAssistantDashboard();
         }
