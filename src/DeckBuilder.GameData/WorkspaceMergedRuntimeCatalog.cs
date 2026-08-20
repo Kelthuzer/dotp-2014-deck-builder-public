@@ -125,7 +125,8 @@ internal static class WorkspaceMergedRuntimeCatalog
                         manifest.VersionName,
                         wad.Name,
                         wad.PrimaryOrder,
-                        storagePath));
+                        storagePath,
+                        file.Sha256));
                 }
             }
         }
@@ -155,13 +156,16 @@ internal static class WorkspaceMergedRuntimeCatalog
         foreach (RuntimeCandidate candidate in effectiveCandidates)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            string hash = string.IsNullOrWhiteSpace(candidate.ManifestSha256)
+                ? HashFile(candidate.StoragePath)
+                : candidate.ManifestSha256.Trim().ToUpperInvariant();
             resources.Add(new WorkspaceMergedRuntimeResource(
                 candidate.RelativePath,
                 candidate.PackageName,
                 candidate.WadName,
                 candidate.WadOrder,
                 candidate.StoragePath,
-                HashFile(candidate.StoragePath)));
+                hash));
         }
 
         string fingerprint = ComputeFingerprint(resources);
@@ -245,5 +249,6 @@ internal static class WorkspaceMergedRuntimeCatalog
         string PackageName,
         string WadName,
         int WadOrder,
-        string StoragePath);
+        string StoragePath,
+        string ManifestSha256);
 }
