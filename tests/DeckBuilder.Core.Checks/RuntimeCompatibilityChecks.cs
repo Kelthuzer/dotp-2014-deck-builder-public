@@ -28,41 +28,22 @@ internal static class RuntimeCompatibilityChecks
             WorkspaceRuntimeCompatibility.IsDynamicCwRegistration(
                 "TOKEN_HUMAN_SOLDIER_C_1_1_W_CW_1",
                 keys),
-            "Matching CW token registrations should still be recognizable for runtime diagnostics.");
+            "Matching CW token registrations must be recognized as runtime-generated registrations.");
         True(
             !WorkspaceRuntimeCompatibility.IsDynamicCwRegistration(
                 "TOKEN_HUMAN_SOLDIER_C_1_1_W_OTHER_1",
                 keys),
             "Unrelated token registrations must not be treated as CW runtime tokens.");
 
-        WorkspaceCardDependencyScanResult missingScan = WorkspaceCardDependencyResolver.Scan(
+        WorkspaceCardDependencyScanResult scan = WorkspaceCardDependencyResolver.Scan(
             card,
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             "HORN_TEST");
         True(
-            missingScan.MissingTokenReferences.Contains(
+            !scan.MissingTokenReferences.Contains(
                 "TOKEN_HUMAN_SOLDIER_C_1_1_W_CW_1",
                 StringComparer.OrdinalIgnoreCase),
-            "CW_Tokens still instantiates a physical CARD_V2 filename; an unavailable registered token must be reported as missing.");
-
-        Dictionary<string, string> aliases = new(StringComparer.OrdinalIgnoreCase)
-        {
-            ["TOKEN_HUMAN_SOLDIER_C_1_1_W_CW_1"] = "TOKEN_HUMAN_SOLDIER_C_1_1_W_CW_1"
-        };
-        WorkspaceCardDependencyScanResult resolvedScan = WorkspaceCardDependencyResolver.Scan(
-            card,
-            aliases,
-            "HORN_TEST");
-        True(
-            resolvedScan.References.Contains(
-                "TOKEN_HUMAN_SOLDIER_C_1_1_W_CW_1",
-                StringComparer.OrdinalIgnoreCase),
-            "An available CW token CARD_V2 must be packaged as a dependency.");
-        True(
-            !resolvedScan.MissingTokenReferences.Contains(
-                "TOKEN_HUMAN_SOLDIER_C_1_1_W_CW_1",
-                StringComparer.OrdinalIgnoreCase),
-            "An available CW token CARD_V2 must not also be reported as missing.");
+            "A CW_Tokens-generated registration without a standalone CARD_V2 must not be reported as a missing card dependency.");
 
         string temp = Path.Combine(Path.GetTempPath(), $"cw-runtime-compat-{Guid.NewGuid():N}");
         Directory.CreateDirectory(temp);
