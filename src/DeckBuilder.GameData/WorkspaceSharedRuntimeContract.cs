@@ -278,6 +278,8 @@ internal static class WorkspaceSharedRuntimeContract
         IReadOnlySet<string> requiredResources,
         CancellationToken cancellationToken)
     {
+        IReadOnlySet<string> workspaceCwTokenKeys =
+            WorkspaceRuntimeCompatibility.ScanWorkspaceCwTokenKeys(workspace, cancellationToken);
         List<WorkspaceRuntimeSource> candidates = new();
         string[] manifests = Directory.EnumerateFiles(
                 workspace,
@@ -321,7 +323,11 @@ internal static class WorkspaceSharedRuntimeContract
         return candidates
             .GroupBy(source => source.RelativePath, StringComparer.OrdinalIgnoreCase)
             .Select(group => group
-                .OrderBy(source => source.WadOrder)
+                .OrderBy(source => WorkspaceRuntimeCompatibility.CountCwTokenCoverage(
+                    source.RelativePath,
+                    source.StoragePath,
+                    workspaceCwTokenKeys))
+                .ThenBy(source => source.WadOrder)
                 .ThenBy(source => source.WadName, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(source => source.PackageName, StringComparer.OrdinalIgnoreCase)
                 .Last())
