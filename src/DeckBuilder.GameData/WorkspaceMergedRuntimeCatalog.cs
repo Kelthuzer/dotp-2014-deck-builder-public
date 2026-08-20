@@ -182,7 +182,7 @@ internal static class WorkspaceMergedRuntimeCatalog
             return false;
 
         string[] parts = normalized.Split('\\', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Any(part => part.StartsWith('.', StringComparison.Ordinal)))
+        if (parts.Any(part => part.StartsWith(".", StringComparison.Ordinal)))
             return false;
 
         string extension = Path.GetExtension(normalized);
