@@ -177,7 +177,8 @@ public partial class MainWindow
             $"Исходных CARD_V2 (колода + unlocks + land pool): {usedReferences.Length}\n" +
             $"Конфликтов вариантов: {relevantConflicts.Length}\n\n" +
             $"Deck WAD:\n{deckWadPath}\n\n" +
-            $"Cards/art/runtime WAD:\n{supportWadPath}\n\n" +
+            $"Cards/art WAD:\n{supportWadPath}\n\n" +
+            "Общий DeckBuilder Runtime будет проверен и при необходимости пересобран автоматически.\n" +
             $"CPE блока {wizard.IdBlock} будет создан/проверен автоматически.",
             "Подтверждение полной упаковки",
             MessageBoxButton.YesNo,
@@ -214,7 +215,7 @@ public partial class MainWindow
                     wizard.CustomCoverSkin);
             }
 
-            Status("Упаковка: собираю CARD_V2 и portable runtime…");
+            Status("Упаковка: собираю CARD_V2/арт и проверяю общий runtime…");
             WorkspaceSelectedCardsBuildResult support = await _workspaceSelectedCardsBuilder.BuildAsync(
                 supportWadPath,
                 usedReferences,
@@ -224,12 +225,12 @@ public partial class MainWindow
                 deckBoxImageId: wizard.DeckBoxImage,
                 deckBoxTexturePath: generatedCoverTdx,
                 runtimeRootIdentifiers: GetAdditionalPortableRuntimeRoots(),
-                order: 50,
+                order: 0,
                 cancellationToken: progressWindow.CancellationToken,
                 progress: buildProgress);
 
             progressWindow.CancellationToken.ThrowIfCancellationRequested();
-            progressWindow.SetProgress(96, "Deck WAD", "Собираю описание колоды, unlocks и Content Pack Enabler…");
+            progressWindow.SetProgress(97, "Deck WAD", "Собираю описание колоды, unlocks и Content Pack Enabler…");
             Status("Упаковка: собираю Deck WAD и Content Pack Enabler…");
             ModernWadExportOptions options = new(
                 deckWadPath,
@@ -254,7 +255,7 @@ public partial class MainWindow
                 ? $"Создан CPE:\n{result.ContentPackEnablerPath}"
                 : $"CPE уже существует:\n{result.ContentPackEnablerPath}";
 
-            progressWindow.SetProgress(100, "Готово", "Deck WAD, Cards/runtime WAD и CPE собраны.");
+            progressWindow.SetProgress(100, "Готово", "Deck WAD, Cards/art WAD, общий runtime и CPE проверены.");
             progressWindow.MarkCompleted();
             progressWindow.Close();
 
@@ -263,10 +264,13 @@ public partial class MainWindow
                 $"Deck UID: {result.DeckUid}\n" +
                 $"Обложка: {coverMode} — {wizard.DeckBoxImage}\n\n" +
                 $"1. Deck WAD:\n{result.WadPath}\n\n" +
-                $"2. Cards/art/runtime WAD:\n{support.WadPath}\n" +
-                $"   CARD_V2: {support.CardCount}; иллюстраций: {support.ArtCount}; runtime: {support.RuntimeResourceCount}; всего файлов: {support.BuildResult.FileCount}\n\n" +
-                $"3. {enablerText}\n\n" +
-                "Для переноса колоды другому игроку передавайте оба WAD колоды/ресурсов и CPE её ID-блока." +
+                $"2. Cards/art WAD:\n{support.WadPath}\n" +
+                $"   CARD_V2: {support.CardCount}; иллюстраций: {support.ArtCount}; дополнительных ресурсов: {support.RuntimeResourceCount}; всего файлов: {support.BuildResult.FileCount}\n\n" +
+                $"3. Общий DeckBuilder Runtime:\n{support.SharedRuntimeWadPath}\n" +
+                $"   Механика этой колоды использует {support.SharedRuntimeResourceCount} ресурсов общего runtime.\n\n" +
+                $"4. {enablerText}\n\n" +
+                "Для переноса колоды другому игроку передавайте Deck WAD, Cards/art WAD и CPE. " +
+                "Общий DeckBuilder Runtime также нужен на целевой установке, но один и тот же runtime используется всеми такими колодами." +
                 warningText,
                 "Упаковка завершена",
                 MessageBoxButton.OK,
@@ -274,7 +278,8 @@ public partial class MainWindow
 
             Status(
                 $"Упакована колода {result.DeckUid}: deck WAD + {support.CardCount} CARD_V2 + " +
-                $"{support.ArtCount} illustrations + {support.RuntimeResourceCount} runtime resources + " +
+                $"{support.ArtCount} illustrations + {support.RuntimeResourceCount} deck-specific resources; " +
+                $"shared runtime {support.SharedRuntimeResourceCount} required resources + " +
                 $"{coverMode} deck cover {wizard.DeckBoxImage} + CPE {wizard.IdBlock}.");
         }
         catch (OperationCanceledException)
