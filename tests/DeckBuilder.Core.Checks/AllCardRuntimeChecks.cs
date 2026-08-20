@@ -81,9 +81,9 @@ internal static class AllCardRuntimeChecks
             // cannot prove in advance.
             AddBinaryPayload("ART_ASSETS\\TEXTURES\\EFFECTS\\UNREFERENCED_EFFECT.TDX", [5, 6]);
             AddBinaryPayload("SOUNDS\\UNREFERENCED_SOUND.BNK", [7, 8, 9]);
-            AddPayload("AI_PERSONALITIES\\D14_SISTERS.XML", "<AI_PERSONALITY />");
 
-            // Deck/card payloads remain deck-specific and must not be merged into the shared runtime.
+            // Deck-owned data remains deck-specific and must not be merged into the shared runtime.
+            AddPayload("AI_PERSONALITIES\\D14_SISTERS.XML", "<AI_PERSONALITY />");
             AddPayload("DECKS\\SHOULD_NOT_COPY.XML", "<DECK />");
             AddPayload("UNLOCKS\\SHOULD_NOT_COPY.XML", "<UNLOCKS />");
 
@@ -157,12 +157,13 @@ internal static class AllCardRuntimeChecks
             ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\TEXT_PERMANENT\\DYNAMIC_ONLY.XML");
             ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\ART_ASSETS\\TEXTURES\\EFFECTS\\UNREFERENCED_EFFECT.TDX");
             ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\SOUNDS\\UNREFERENCED_SOUND.BNK");
-            ContainsSuffix(paths, "\\DATA_ALL_PLATFORMS\\AI_PERSONALITIES\\D14_SISTERS.XML");
 
             True(!paths.Any(path => path.Contains("\\CARDS\\ROOT.XML", StringComparison.OrdinalIgnoreCase)),
                 "Shared runtime WAD must not contain normal CARD_V2 payloads.");
             True(!paths.Any(path => path.Contains("\\ART_ASSETS\\ILLUSTRATIONS\\10001.TDX", StringComparison.OrdinalIgnoreCase)),
                 "Shared runtime WAD must not contain normal card illustrations.");
+            True(!paths.Any(path => path.Contains("\\AI_PERSONALITIES\\D14_SISTERS.XML", StringComparison.OrdinalIgnoreCase)),
+                "Shared runtime WAD must not contain deck-owned AI personalities.");
             True(!paths.Any(path => path.Contains("\\DECKS\\SHOULD_NOT_COPY.XML", StringComparison.OrdinalIgnoreCase)),
                 "Shared runtime WAD must not contain deck definitions.");
             True(!paths.Any(path => path.Contains("\\UNLOCKS\\SHOULD_NOT_COPY.XML", StringComparison.OrdinalIgnoreCase)),
@@ -198,8 +199,6 @@ internal static class AllCardRuntimeChecks
                 "The full TEXT_PERMANENT game-runtime tree must be included while editor metadata is excluded.");
             True(result.RuntimeResourceCounts.TryGetValue("SOUNDS", out int sounds) && sounds == 1,
                 "Unreferenced shared sound resources must be included by the full merged runtime.");
-            True(result.RuntimeResourceCounts.TryGetValue("AI_PERSONALITIES", out int personalities) && personalities == 1,
-                "AI personalities must be included by the full merged runtime.");
 
             WorkspaceSharedRuntimeInspection inspection = WorkspaceSharedRuntimeContract.Inspect(
                 output,
