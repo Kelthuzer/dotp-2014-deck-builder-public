@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Gibbed.Duels.FileFormats;
+using Wad = Gibbed.Duels.FileFormats.Wad;
 
 namespace DeckBuilder.GameData;
 
@@ -137,7 +139,6 @@ internal static class WorkspaceSharedRuntimeContract
                 .Where(element => element.ValueKind == JsonValueKind.String)
                 .Select(element => NormalizeResourcePath(element.GetString()))
                 .Where(value => !string.IsNullOrWhiteSpace(value))
-                .Select(value => value!)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             if (resources.Count == 0)
                 return Invalid("список resources общего runtime пуст");
@@ -145,6 +146,35 @@ internal static class WorkspaceSharedRuntimeContract
             {
                 return Invalid(
                     $"manifest общего runtime объявляет {declaredResourceCount:N0} ресурсов, но перечисляет {resources.Count:N0}");
+            }
+
+            HashSet<string> actualResources;
+            try
+            {
+                actualResources = ReadRuntimeResources(wad, cancellationToken);
+            }
+            catch (Exception exception)
+            {
+                return Invalid($"общий runtime WAD не читается: {exception.Message}");
+            }
+
+            if (!resources.SetEquals(actualResources))
+            {
+                string[] missingFromWad = resources
+                    .Where(resource => !actualResources.Contains(resource))
+                    .Take(8)
+                    .ToArray();
+                string[] unexpectedInWad = actualResources
+                    .Where(resource => !resources.Contains(resource))
+                    .Take(8)
+                    .ToArray();
+                string details = string.Empty;
+                if (missingFromWad.Length > 0)
+                    details += $" отсутствуют в WAD: {string.Join(", ", missingFromWad)};";
+                if (unexpectedInWad.Length > 0)
+                    details += $" лишние в WAD: {string.Join(", ", unexpectedInWad)};";
+                return Invalid(
+                    $"фактический состав runtime WAD ({actualResources.Count:N0}) не совпадает с manifest ({resources.Count:N0});{details}");
             }
 
             return new WorkspaceSharedRuntimeInspection(
@@ -199,11 +229,56 @@ internal static class WorkspaceSharedRuntimeContract
         {
             cancellationToken.ThrowIfCancellationRequested();
             DotpVersionPackageManifest manifest = packageService.ReadManifest(Path.GetDirectoryName(manifestPath)!);
-            foreach (DotpWadPackageManifest wad in manifest.Wads)
-                maxOrder = Math.Max(maxOrder, wad.PrimaryOrder);
+            foreach (DotpWadPackageManifest sourceWad in manifest.Wads)
+                maxOrder = Math.Max(maxOrder, sourceWad.PrimaryOrder);
         }
 
         return maxOrder;
+    }
+
+    private static HashSet<string> ReadRuntimeResources(
+        string wadPath,
+        CancellationToken cancellationToken)
+    {
+        using FileStream input = File.OpenRead(wadPath);
+        WadFile wad = new();
+        wad.Deserialize(input);
+
+        HashSet<string> resources = new(StringComparer.OrdinalIgnoreCase);
+        foreach (Wad.DirectoryEntry directory in wad.Directories)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Collect(directory, directory.Name, resources, cancellationToken);
+        }
+
+        return resources;
+    }
+
+    private static void Collect(
+        Wad.DirectoryEntry directory,
+        string path,
+        ISet<string> output,
+        CancellationToken cancellationToken)
+    {
+        const string marker = "DATA_ALL_PLATFORMS\\";
+        foreach (Wad.FileEntry file in directory.Files)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string archivePath = $"{path}\\{file.Name}";
+            int markerIndex = archivePath.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (markerIndex < 0)
+                continue;
+
+            string relative = archivePath[(markerIndex + marker.Length)..];
+            if (!string.IsNullOrWhiteSpace(relative))
+                output.Add(NormalizeResourcePath(relative));
+        }
+
+        foreach (Wad.DirectoryEntry child in directory.Directories)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Collect(child, $"{path}\\{child.Name}", output, cancellationToken);
+        }
     }
 
     private static int RequiredInt(JsonElement root, string propertyName)
