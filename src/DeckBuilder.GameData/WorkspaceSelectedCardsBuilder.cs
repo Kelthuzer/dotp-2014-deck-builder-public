@@ -109,6 +109,7 @@ public sealed class WorkspaceSelectedCardsBuilder
         Report(progress, 12, "Индекс runtime", "Читаю FUNCTIONS, SPECS, TEXT и связанные ресурсы workspace…");
         WorkspacePortableRuntimeIndex runtimeIndex = WorkspacePortableRuntimeIndex.Load(
             workspace,
+            scan,
             warnings,
             warningKeys,
             cancellationToken);
