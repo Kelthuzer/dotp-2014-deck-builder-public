@@ -260,19 +260,78 @@ public partial class MainWindow
 
     internal static HashSet<char> BasicLandColors(CardRecord card)
     {
-        string name = card.FileName.ToUpperInvariant();
         HashSet<char> colors = new();
-        if (name.Contains("PLAINS")) colors.Add('W');
-        if (name.Contains("ISLAND")) colors.Add('U');
-        if (name.Contains("SWAMP")) colors.Add('B');
-        if (name.Contains("MOUNTAIN")) colors.Add('R');
-        if (name.Contains("FOREST")) colors.Add('G');
+        string fileName = Path.GetFileNameWithoutExtension(card.FileName).Trim();
+
+        AddCanonicalBasicLandColor(colors, fileName, "PLAINS", 'W');
+        AddCanonicalBasicLandColor(colors, fileName, "ISLAND", 'U');
+        AddCanonicalBasicLandColor(colors, fileName, "SWAMP", 'B');
+        AddCanonicalBasicLandColor(colors, fileName, "MOUNTAIN", 'R');
+        AddCanonicalBasicLandColor(colors, fileName, "FOREST", 'G');
+        if (colors.Count > 0)
+            return colors;
+
+        string english = card.EnglishName.Trim();
+        AddExactBasicLandName(colors, english, "Plains", 'W');
+        AddExactBasicLandName(colors, english, "Island", 'U');
+        AddExactBasicLandName(colors, english, "Swamp", 'B');
+        AddExactBasicLandName(colors, english, "Mountain", 'R');
+        AddExactBasicLandName(colors, english, "Forest", 'G');
+        if (colors.Count > 0)
+            return colors;
+
+        string localized = card.LocalizedName.Trim();
+        AddExactBasicLandName(colors, localized, "Равнина", 'W');
+        AddExactBasicLandName(colors, localized, "Остров", 'U');
+        AddExactBasicLandName(colors, localized, "Болото", 'B');
+        AddExactBasicLandName(colors, localized, "Гора", 'R');
+        AddExactBasicLandName(colors, localized, "Лес", 'G');
+        if (colors.Count > 0)
+            return colors;
+
+        string type = card.TypeLine.Trim();
+        bool basicType = type.Contains("Basic", StringComparison.OrdinalIgnoreCase)
+            || type.Contains("Базов", StringComparison.OrdinalIgnoreCase);
+        if (basicType)
+        {
+            if (type.Contains("Plains", StringComparison.OrdinalIgnoreCase)) colors.Add('W');
+            if (type.Contains("Island", StringComparison.OrdinalIgnoreCase)) colors.Add('U');
+            if (type.Contains("Swamp", StringComparison.OrdinalIgnoreCase)) colors.Add('B');
+            if (type.Contains("Mountain", StringComparison.OrdinalIgnoreCase)) colors.Add('R');
+            if (type.Contains("Forest", StringComparison.OrdinalIgnoreCase)) colors.Add('G');
+        }
+
         return colors;
+    }
+
+    private static void AddCanonicalBasicLandColor(
+        ISet<char> colors,
+        string fileName,
+        string basicName,
+        char color)
+    {
+        if (fileName.Equals(basicName, StringComparison.OrdinalIgnoreCase)
+            || fileName.StartsWith(basicName + "_", StringComparison.OrdinalIgnoreCase)
+            || fileName.StartsWith("BASIC_" + basicName + "_", StringComparison.OrdinalIgnoreCase))
+        {
+            colors.Add(color);
+        }
+    }
+
+    private static void AddExactBasicLandName(
+        ISet<char> colors,
+        string actual,
+        string expected,
+        char color)
+    {
+        if (actual.Equals(expected, StringComparison.OrdinalIgnoreCase))
+            colors.Add(color);
     }
 
     internal static bool IsLand(CardRecord card) =>
         card.TypeLine.Contains("Land", StringComparison.OrdinalIgnoreCase)
-        || card.TypeLine.Contains("Земл", StringComparison.OrdinalIgnoreCase);
+        || card.TypeLine.Contains("Земл", StringComparison.OrdinalIgnoreCase)
+        || BasicLandColors(card).Count > 0;
 
     private static bool IsArtifactForAssistant(CardRecord card) =>
         card.TypeLine.Contains("Artifact", StringComparison.OrdinalIgnoreCase)
