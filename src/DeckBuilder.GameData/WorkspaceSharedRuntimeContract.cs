@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using System.Text.Json;
 
 namespace DeckBuilder.GameData;
@@ -23,8 +22,10 @@ internal sealed record WorkspaceSharedRuntimeInspection(
 
 /// <summary>
 /// Contract for the one-per-workspace complete merged runtime. A usable runtime must represent
-/// exactly the current effective non-card workspace resources and must match the WAD produced by
-/// the builder byte-for-byte. Older dependency-pruned runtime manifests are intentionally rejected.
+/// exactly the current effective shared non-card workspace resources. Older dependency-pruned
+/// runtime manifests are intentionally rejected. Card-specific CW compatibility is validated by
+/// WorkspacePortableRuntimeIndex when an actual deck is packaged, not globally for every card in
+/// a multi-version workspace.
 /// </summary>
 internal static class WorkspaceSharedRuntimeContract
 {
@@ -72,13 +73,6 @@ internal static class WorkspaceSharedRuntimeContract
             return Invalid($"не удалось построить текущий merged runtime catalog: {exception.Message}");
         }
 
-        if (catalog.MissingCwTokenKeys.Count > 0)
-        {
-            return Invalid(
-                $"текущий workspace не содержит совместимый CW_TOKENS runtime для: " +
-                string.Join(", ", catalog.MissingCwTokenKeys.Take(12)));
-        }
-
         try
         {
             using JsonDocument document = JsonDocument.Parse(File.ReadAllText(manifestPath));
@@ -103,7 +97,8 @@ internal static class WorkspaceSharedRuntimeContract
             int cardRootCount = RequiredInt(root, "cardRootCount");
             int declaredResourceCount = RequiredInt(root, "runtimeResourceCount");
             string declaredFingerprint = RequiredString(root, "workspaceRuntimeFingerprint");
-            string declaredWadSha256 = RequiredString(root, "wadSha256");
+            long declaredWadLength = RequiredLong(root, "wadLength");
+            long declaredWadLastWriteUtcTicks = RequiredLong(root, "wadLastWriteUtcTicks");
 
             if (sourceMaxOrder != catalog.SourceMaxOrder)
             {
@@ -161,9 +156,12 @@ internal static class WorkspaceSharedRuntimeContract
                 return Invalid($"manifest runtime не совпадает с полным merged catalog;{details}");
             }
 
-            string actualWadSha256 = HashFile(wad);
-            if (!actualWadSha256.Equals(declaredWadSha256, StringComparison.OrdinalIgnoreCase))
-                return Invalid("общий runtime WAD изменён или повреждён после сборки");
+            FileInfo wadInfo = new(wad);
+            if (wadInfo.Length != declaredWadLength
+                || wadInfo.LastWriteTimeUtc.Ticks != declaredWadLastWriteUtcTicks)
+            {
+                return Invalid("общий runtime WAD изменён после сборки");
+            }
 
             return new WorkspaceSharedRuntimeInspection(
                 new WorkspaceSharedRuntimeSnapshot(
@@ -209,6 +207,18 @@ internal static class WorkspaceSharedRuntimeContract
         return value;
     }
 
+    private static long RequiredLong(JsonElement root, string propertyName)
+    {
+        if (!root.TryGetProperty(propertyName, out JsonElement element)
+            || element.ValueKind != JsonValueKind.Number
+            || !element.TryGetInt64(out long value))
+        {
+            throw new InvalidDataException($"Required integer property '{propertyName}' is missing.");
+        }
+
+        return value;
+    }
+
     private static string RequiredString(JsonElement root, string propertyName)
     {
         if (!root.TryGetProperty(propertyName, out JsonElement element)
@@ -219,12 +229,6 @@ internal static class WorkspaceSharedRuntimeContract
         }
 
         return element.GetString()!;
-    }
-
-    private static string HashFile(string path)
-    {
-        using FileStream input = File.OpenRead(path);
-        return Convert.ToHexString(SHA256.HashData(input));
     }
 
     private static string NormalizeResourcePath(string? value) =>
