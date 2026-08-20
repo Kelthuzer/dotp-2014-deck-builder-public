@@ -14,7 +14,7 @@ internal static class WorkspaceRuntimeCompatibility
     /// disabled so a per-deck scan cannot reject a deck because one historical CW_TOKENS registry
     /// does not enumerate every archetype found elsewhere in the workspace.
     /// </summary>
-    public const bool EnforcePerDeckCwTokenRegistry = false;
+    public static readonly bool EnforcePerDeckCwTokenRegistry = false;
 
     private static readonly Regex CwTokensCallRegex = new(
         "(?i)\\bCW_Tokens\\s*\\(\\s*[\"']([^\"'\\r\\n]+)[\"']",
