@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Xml.Linq;
 
 namespace DeckBuilder.GameData;
 
@@ -21,16 +22,17 @@ internal sealed record WorkspaceSharedRuntimeInspection(
 }
 
 /// <summary>
-/// Contract for the one-per-workspace complete merged runtime. A usable runtime must represent
-/// exactly the current effective shared non-card workspace resources. Older dependency-pruned
-/// runtime manifests are intentionally rejected. Card-specific CW compatibility is validated by
-/// WorkspacePortableRuntimeIndex when an actual deck is packaged, not globally for every card in
-/// a multi-version workspace.
+/// Contract for the runtime that supplies shared non-card resources while packaging a deck.
+/// A normal extracted workspace can still use the generated complete merged runtime. When the
+/// target installation is a single-version XMAS game with its native unpacked
+/// DATA_DLC_DECK_BUILDER_CUSTOM directory, that already-loaded game runtime is authoritative and
+/// must not be shadowed by a generated Data_DLC_8000 runtime.
 /// </summary>
 internal static class WorkspaceSharedRuntimeContract
 {
     public const string WadFileName = "Data_DLC_8000_DeckBuilder_Runtime.wad";
     public const int ManifestFormatVersion = 4;
+    private const string NativeRuntimeDirectoryName = "DATA_DLC_DECK_BUILDER_CUSTOM";
 
     public static WorkspaceSharedRuntimeInspection Inspect(
         string wadPath,
@@ -44,30 +46,27 @@ internal static class WorkspaceSharedRuntimeContract
 
         string wad = Path.GetFullPath(wadPath);
         string workspace = Path.GetFullPath(workspaceDirectory);
+
+        WorkspaceSharedRuntimeInspection? nativeRuntime = TryInspectNativeGameRuntime(
+            wad,
+            workspace,
+            scan,
+            cancellationToken);
+        if (nativeRuntime is not null)
+            return nativeRuntime;
+
         string manifestPath = wad + ".runtime.json";
         if (!File.Exists(wad) || new FileInfo(wad).Length == 0)
             return Invalid("общий runtime WAD отсутствует или пуст");
         if (!File.Exists(manifestPath))
             return Invalid("рядом с общим runtime WAD нет .runtime.json manifest");
 
-        int currentCardRootCount = scan.CardVariants
-            .Select(variant => variant.Reference)
-            .Where(reference => !string.IsNullOrWhiteSpace(reference))
-            .Select(reference => reference.Trim())
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Count();
+        int currentCardRootCount = CountCardRoots(scan);
 
         WorkspaceMergedRuntimeCatalogSnapshot catalog;
         try
         {
-            List<string> warnings = new();
-            HashSet<string> warningKeys = new(StringComparer.OrdinalIgnoreCase);
-            catalog = WorkspaceMergedRuntimeCatalog.Load(
-                workspace,
-                scan,
-                warnings,
-                warningKeys,
-                cancellationToken);
+            catalog = LoadCatalog(workspace, scan, cancellationToken);
         }
         catch (Exception exception)
         {
@@ -194,6 +193,127 @@ internal static class WorkspaceSharedRuntimeContract
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(resource => resource, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    private static WorkspaceSharedRuntimeInspection? TryInspectNativeGameRuntime(
+        string requestedRuntimeWad,
+        string workspace,
+        WorkspaceContentVariantScanResult scan,
+        CancellationToken cancellationToken)
+    {
+        // A mixed multi-version workspace must never be mistaken for a native XMAS installation.
+        // Unified XMAS + Goblin will use its own explicit compatibility layer later.
+        if (scan.PackageCount != 1)
+            return null;
+
+        string? outputDirectory = Path.GetDirectoryName(requestedRuntimeWad);
+        if (string.IsNullOrWhiteSpace(outputDirectory))
+            return null;
+
+        DirectoryInfo output = new(outputDirectory);
+        DirectoryInfo? gameDirectory = output.Name.Equals("MyDecks", StringComparison.OrdinalIgnoreCase)
+            ? output.Parent
+            : null;
+        if (gameDirectory is null)
+            return null;
+
+        string nativeRoot = Path.Combine(gameDirectory.FullName, NativeRuntimeDirectoryName);
+        string headerPath = Path.Combine(nativeRoot, "HEADER.XML");
+        string dataRoot = Path.Combine(nativeRoot, "DATA_ALL_PLATFORMS");
+        if (!Directory.Exists(nativeRoot)
+            || !File.Exists(headerPath)
+            || !Directory.Exists(dataRoot))
+        {
+            return null;
+        }
+
+        // Do not activate native mode merely because an unrelated directory has the same name.
+        if (!File.Exists(Path.Combine(gameDirectory.FullName, "DotP_D14.exe"))
+            && !File.Exists(Path.Combine(gameDirectory.FullName, "DotP_D13.exe")))
+        {
+            return null;
+        }
+
+        WorkspaceMergedRuntimeCatalogSnapshot catalog;
+        try
+        {
+            catalog = LoadCatalog(workspace, scan, cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            return Invalid($"найден native XMAS runtime, но workspace runtime catalog не читается: {exception.Message}");
+        }
+
+        int nativeOrder = ReadNativeRuntimeOrder(headerPath, catalog.SourceMaxOrder);
+        int effectiveOrder = Math.Max(nativeOrder, catalog.SourceMaxOrder);
+        HashSet<string> resources = catalog.Resources
+            .Select(resource => NormalizeResourcePath(resource.RelativePath))
+            .Where(resource => resource.Length > 0)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        return new WorkspaceSharedRuntimeInspection(
+            new WorkspaceSharedRuntimeSnapshot(
+                nativeRoot,
+                headerPath,
+                catalog.SourceMaxOrder,
+                effectiveOrder,
+                CountCardRoots(scan),
+                resources),
+            $"используется native XMAS runtime {NativeRuntimeDirectoryName} (order {nativeOrder}); Data_DLC_8000 не нужен");
+    }
+
+    private static WorkspaceMergedRuntimeCatalogSnapshot LoadCatalog(
+        string workspace,
+        WorkspaceContentVariantScanResult scan,
+        CancellationToken cancellationToken)
+    {
+        List<string> warnings = new();
+        HashSet<string> warningKeys = new(StringComparer.OrdinalIgnoreCase);
+        return WorkspaceMergedRuntimeCatalog.Load(
+            workspace,
+            scan,
+            warnings,
+            warningKeys,
+            cancellationToken);
+    }
+
+    private static int CountCardRoots(WorkspaceContentVariantScanResult scan) =>
+        scan.CardVariants
+            .Select(variant => variant.Reference)
+            .Where(reference => !string.IsNullOrWhiteSpace(reference))
+            .Select(reference => reference.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+
+    private static int ReadNativeRuntimeOrder(string headerPath, int fallback)
+    {
+        try
+        {
+            XDocument document = XDocument.Load(headerPath, LoadOptions.None);
+            foreach (XAttribute attribute in document.DescendantsAndSelf().Attributes())
+            {
+                if (attribute.Name.LocalName.Equals("order", StringComparison.OrdinalIgnoreCase)
+                    && int.TryParse(attribute.Value, out int order))
+                {
+                    return order;
+                }
+            }
+
+            foreach (XElement element in document.Descendants())
+            {
+                if (element.Name.LocalName.Equals("order", StringComparison.OrdinalIgnoreCase)
+                    && int.TryParse(element.Value, out int order))
+                {
+                    return order;
+                }
+            }
+        }
+        catch (Exception exception) when (exception is IOException or System.Xml.XmlException)
+        {
+            // A valid native directory is still preferable to shadowing it with a generated runtime.
+        }
+
+        return fallback;
     }
 
     private static int RequiredInt(JsonElement root, string propertyName)
