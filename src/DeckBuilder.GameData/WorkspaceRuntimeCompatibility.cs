@@ -10,7 +10,7 @@ namespace DeckBuilder.GameData;
 internal static class WorkspaceRuntimeCompatibility
 {
     private static readonly Regex CwTokensCallRegex = new(
-        @"(?i)\bCW_Tokens\s*\(\s*[\""']([^\""'\r\n]+)[\""']",
+        "(?i)\\bCW_Tokens\\s*\\(\\s*[\"']([^\"'\\r\\n]+)[\"']",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     public static IReadOnlySet<string> ScanWorkspaceCwTokenKeys(
