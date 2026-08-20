@@ -3,6 +3,9 @@ namespace DeckBuilder.Core.Models;
 public sealed class DeckDocument
 {
     public const int MaximumPromoUnlocks = 10;
+    public const string DefaultPersonality = "D14_SISTERS.XML";
+
+    private string _personality = DefaultPersonality;
 
     public IList<DeckEntry> MainDeck { get; } = new List<DeckEntry>();
 
@@ -16,7 +19,11 @@ public sealed class DeckDocument
 
     public string Description { get; set; } = string.Empty;
 
-    public string Personality { get; set; } = string.Empty;
+    public string Personality
+    {
+        get => string.IsNullOrWhiteSpace(_personality) ? DefaultPersonality : _personality;
+        set => _personality = value ?? string.Empty;
+    }
 
     public AiPersonalityDefinition? CustomPersonality { get; set; }
 
