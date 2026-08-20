@@ -290,7 +290,10 @@ internal static class WorkspaceSharedRuntimeContract
         try
         {
             XDocument document = XDocument.Load(headerPath, LoadOptions.None);
-            foreach (XAttribute attribute in document.DescendantsAndSelf().Attributes())
+            IEnumerable<XElement> elements = document.Root is null
+                ? Enumerable.Empty<XElement>()
+                : document.Root.DescendantsAndSelf();
+            foreach (XAttribute attribute in elements.Attributes())
             {
                 if (attribute.Name.LocalName.Equals("order", StringComparison.OrdinalIgnoreCase)
                     && int.TryParse(attribute.Value, out int order))
@@ -308,7 +311,7 @@ internal static class WorkspaceSharedRuntimeContract
                 }
             }
         }
-        catch (Exception exception) when (exception is IOException or System.Xml.XmlException)
+        catch (Exception) when (File.Exists(headerPath))
         {
             // A valid native directory is still preferable to shadowing it with a generated runtime.
         }
