@@ -17,11 +17,28 @@ internal static class CompactLandPoolChecks
             "Tester",
             castingCost: "{W}",
             colour: "W");
-        CardRecord plainsA = BasicLand("PLAINS_100", "Plains");
-        CardRecord plainsB = BasicLand("PLAINS_200", "Plains");
-        CardRecord plainsC = BasicLand("PLAINS_300", "Plains");
-        CardRecord forest = BasicLand("FOREST_100", "Forest");
-        CardRecord[] catalog = [plainsA, plainsB, plainsC, forest, whiteSpell];
+        CardRecord blueSpell = new(
+            "BLUE_TEST_SPELL",
+            "Blue test spell",
+            "Blue test spell",
+            "Creature",
+            "TEST",
+            "Tester",
+            castingCost: "{U}",
+            colour: "U");
+        CardRecord plainsA = BasicLand("PLAINS_CW_10581", "PLAINS", "Plains");
+        CardRecord plainsB = BasicLand("PLAINS_CW_NEG_11", "PLAINS", "Plains");
+        CardRecord plainsC = BasicLand("PLAINS_357845", "PLAINS", "Plains");
+        CardRecord island = BasicLand("ISLAND_CW_10551", "ISLAND", "Island");
+        CardRecord wakWak = new(
+            "ISLAND_OF_WAKWAK_CW_989",
+            "Island of Wak-Wak",
+            "ISLAND_OF_WAKWAK",
+            "Land",
+            "XMAS",
+            "Tester");
+        CardRecord forest = BasicLand("FOREST_CW_NEG_29", "FOREST", "Forest");
+        CardRecord[] catalog = [wakWak, plainsA, plainsB, plainsC, island, forest, whiteSpell, blueSpell];
 
         DeckDocument existingVariantDeck = new();
         existingVariantDeck.MainDeck.Add(new DeckEntry(whiteSpell, 4));
@@ -41,18 +58,27 @@ internal static class CompactLandPoolChecks
         noExistingVariantDeck.MainDeck.Add(new DeckEntry(whiteSpell, 4));
         IReadOnlyList<CardRecord> fallbackPool = DeckLandPoolSelector.Select(noExistingVariantDeck, catalog);
         Equal(4, fallbackPool.Count, "Fallback hidden land pool should keep four entries.");
-        True(fallbackPool.All(card => ReferenceEquals(card, plainsA)),
-            "Without an existing basic land, the selector should deterministically repeat the first catalog variant.");
+        True(fallbackPool.All(card => ReferenceEquals(card, plainsC)),
+            "Without an existing basic land, the selector should deterministically choose a real metadata-defined Plains variant.");
+
+        DeckDocument blueDeck = new();
+        blueDeck.MainDeck.Add(new DeckEntry(blueSpell, 4));
+        IReadOnlyList<CardRecord> bluePool = DeckLandPoolSelector.Select(blueDeck, catalog);
+        Equal(4, bluePool.Count, "A mono-blue hidden land pool should keep four entries.");
+        True(bluePool.All(card => ReferenceEquals(card, island)),
+            "The hidden land pool must ignore Island of Wak-Wak even when its filename sorts before a real Island.");
+        True(bluePool.All(CardLandClassification.IsBasicLand),
+            "Every hidden automatic land-pool entry must be a real basic land.");
 
         Console.WriteLine("PASS: compact duplicate basic-land pool");
     }
 
-    private static CardRecord BasicLand(string fileName, string englishName) => new(
+    private static CardRecord BasicLand(string fileName, string englishName, string subtype) => new(
         fileName,
+        subtype,
         englishName,
-        englishName,
-        $"Basic Land — {englishName}",
-        "TEST",
+        $"Basic Land {subtype}",
+        "XMAS",
         "Tester");
 
     private static void True(bool value, string message)
