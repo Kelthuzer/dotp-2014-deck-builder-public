@@ -17,12 +17,12 @@ internal static class PortableDeckPlannerChecks
         [
             redSpell,
             promoSpell,
-            Card("MOUNTAIN_001", string.Empty, "Land"),
-            Card("MOUNTAIN_002", string.Empty, "Land"),
-            Card("MOUNTAIN_003", string.Empty, "Land"),
-            Card("MOUNTAIN_004", string.Empty, "Land"),
-            Card("MOUNTAIN_005", string.Empty, "Land"),
-            Card("FOREST_001", string.Empty, "Land")
+            Card("MOUNTAIN_001", string.Empty, "Basic Land Mountain"),
+            Card("MOUNTAIN_002", string.Empty, "Basic Land Mountain"),
+            Card("MOUNTAIN_003", string.Empty, "Basic Land Mountain"),
+            Card("MOUNTAIN_004", string.Empty, "Basic Land Mountain"),
+            Card("MOUNTAIN_005", string.Empty, "Basic Land Mountain"),
+            Card("FOREST_001", string.Empty, "Basic Land Forest")
         ];
 
         IReadOnlyList<string> references = PortableDeckCardReferencePlanner.GetRequiredReferences(deck, catalog);
