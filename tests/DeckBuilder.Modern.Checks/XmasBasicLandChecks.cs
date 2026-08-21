@@ -28,6 +28,20 @@ internal static class XmasBasicLandChecks
         True(Invoke<bool>(isBasicLand, xmasMountain),
             "XMAS MOUNTAIN_* with the canonical English name must pass the basic-land filter used by random/auto land generation.");
 
+        CardRecord localizedOnlyPlains = new(
+            "XMAS_BASIC_999003",
+            "Равнина",
+            "Равнина",
+            string.Empty,
+            "XMAS",
+            string.Empty);
+        True(Invoke<HashSet<char>>(basicLandColors, localizedOnlyPlains).SetEquals(['W']),
+            "A localized-only XMAS Plains must still be recognized as a white basic land.");
+        True(Invoke<bool>(isLand, localizedOnlyPlains),
+            "A localized-only XMAS Plains must be recognized as a land.");
+        True(Invoke<bool>(isBasicLand, localizedOnlyPlains),
+            "A localized-only XMAS Plains must pass the basic-land filter used by random/auto land generation.");
+
         CardRecord nonBasicMountain = new(
             "MADBLIND_MOUNTAIN_999002",
             "Безумная гора",
@@ -37,6 +51,8 @@ internal static class XmasBasicLandChecks
             string.Empty);
         True(Invoke<HashSet<char>>(basicLandColors, nonBasicMountain).Count == 0,
             "A nonbasic card whose filename merely contains MOUNTAIN must not be classified as a basic Mountain.");
+        True(!Invoke<bool>(isBasicLand, nonBasicMountain),
+            "A nonbasic Mountain must not pass the basic-land filter.");
 
         Console.WriteLine("PASS: XMAS basic-land recognition");
     }
