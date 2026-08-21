@@ -14,55 +14,55 @@ internal static class XmasBasicLandChecks
         MethodInfo isBasicLand = RequireStaticNonPublic("IsBasicLand");
 
         CardRecord xmasMountain = new(
-            "MOUNTAIN_999001",
+            "MOUNTAIN_CW_NEG_67",
             "Гора",
-            "Mountain",
-            string.Empty,
+            "MOUNTAIN",
+            "Basic Land Mountain",
             "XMAS",
             string.Empty);
 
         HashSet<char> colors = Invoke<HashSet<char>>(basicLandColors, xmasMountain);
         True(colors.SetEquals(['R']),
-            "XMAS MOUNTAIN_* must be recognized as a red basic land even when TypeLine is incomplete.");
+            "XMAS Basic Land Mountain metadata must be recognized as red regardless of filename suffix.");
         True(Invoke<bool>(isLand, xmasMountain),
-            "XMAS MOUNTAIN_* must be recognized as a land even when TypeLine is incomplete.");
+            "XMAS Basic Land Mountain metadata must be recognized as a land.");
         True(Invoke<bool>(isBasicLand, xmasMountain),
-            "XMAS MOUNTAIN_* with the canonical English name must pass the basic-land filter used by random/auto land generation.");
+            "XMAS Basic Land Mountain metadata must pass the Modern basic-land filter.");
 
         CardRecord localizedOnlyPlains = new(
-            "XMAS_BASIC_999003",
+            "COMMUNITY_BASIC_UNKNOWN",
             "Равнина",
-            "Равнина",
+            "PLAINS",
             string.Empty,
             "XMAS",
             string.Empty);
         True(Invoke<HashSet<char>>(basicLandColors, localizedOnlyPlains).SetEquals(['W']),
-            "A localized-only XMAS Plains must still be recognized as a white basic land.");
+            "A type-less legacy Plains may still use exact-name fallback.");
         True(Invoke<bool>(isLand, localizedOnlyPlains),
-            "A localized-only XMAS Plains must be recognized as a land.");
+            "A type-less exact-name Plains fallback must be recognized as a land.");
         True(Invoke<bool>(isBasicLand, localizedOnlyPlains),
-            "A localized-only XMAS Plains must pass the basic-land filter used by random/auto land generation.");
+            "A type-less exact-name Plains fallback must pass the basic-land filter.");
 
         CardRecord xmasCwPlains = new(
-            "PLAINS_CW_999005",
-            "Равнина XMAS",
-            "XMAS Plains variant",
-            string.Empty,
+            "PLAINS_CW_10581",
+            "Равнина",
+            "PLAINS",
+            "Basic Land Plains",
             "XMAS",
             string.Empty);
         True(Invoke<HashSet<char>>(basicLandColors, xmasCwPlains).SetEquals(['W']),
-            "XMAS PLAINS_CW_<id> must be recognized as a white basic land.");
+            "The baseline XMAS PLAINS_CW_10581 shape must be recognized as white from metadata.");
         True(Invoke<bool>(isLand, xmasCwPlains),
-            "XMAS PLAINS_CW_<id> must be recognized as a land.");
+            "The baseline XMAS PLAINS_CW_10581 shape must be recognized as a land.");
         True(Invoke<bool>(isBasicLand, xmasCwPlains),
-            "XMAS PLAINS_CW_<id> must pass the Modern basic-land filter.");
+            "The baseline XMAS PLAINS_CW_10581 shape must pass the Modern basic-land filter.");
 
         DeckDocument xmasDeck = new();
         DeckEditor xmasEditor = new(xmasDeck);
         for (int copy = 0; copy < 6; copy++)
             xmasEditor.Add(xmasCwPlains, DeckSection.MainDeck);
         True(xmasDeck.MainDeckCardCount == 6,
-            "DeckEditor must allow more than four copies of XMAS PLAINS_CW_<id> basic lands.");
+            "DeckEditor must allow more than four copies of a metadata-defined XMAS basic land.");
 
         CardRecord nonBasicMountain = new(
             "MADBLIND_MOUNTAIN_999002",
@@ -72,19 +72,19 @@ internal static class XmasBasicLandChecks
             "XMAS",
             string.Empty);
         True(Invoke<HashSet<char>>(basicLandColors, nonBasicMountain).Count == 0,
-            "A nonbasic card whose filename merely contains MOUNTAIN must not be classified as a basic Mountain.");
+            "A nonbasic Mountain subtype must not be classified as a basic Mountain without Basic.");
         True(!Invoke<bool>(isBasicLand, nonBasicMountain),
             "A nonbasic Mountain must not pass the basic-land filter.");
 
         CardRecord islandOfWakWak = new(
-            "ISLAND_OF_WAK_WAK_999004",
+            "ISLAND_OF_WAKWAK_CW_989",
             "Island of Wak-Wak",
-            "Island of Wak-Wak",
-            "Land Island",
-            "ARN",
+            "ISLAND_OF_WAKWAK",
+            "Land",
+            "XMAS",
             string.Empty);
         True(Invoke<HashSet<char>>(basicLandColors, islandOfWakWak).Count == 0,
-            "Island of Wak-Wak must not be classified as a basic Island just because its filename starts with ISLAND_.");
+            "Island of Wak-Wak must not be classified as a basic Island from its filename.");
         True(Invoke<bool>(isLand, islandOfWakWak),
             "Island of Wak-Wak must still be recognized as a land.");
         True(!Invoke<bool>(isBasicLand, islandOfWakWak),
