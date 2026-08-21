@@ -59,7 +59,7 @@ public static class CardLandClassification
             if (!tokens.IsBasic)
                 return colors;
 
-            foreach ((string english, _, char color) in BasicLandTypes)
+            foreach (var (english, _, color) in BasicLandTypes)
             {
                 if (tokens.Contains(english))
                     colors.Add(color);
@@ -90,7 +90,7 @@ public static class CardLandClassification
         string localizedName = card.LocalizedName.Trim();
         string fileName = card.FileName.Trim();
 
-        foreach ((string english, string russian, char color) in BasicLandTypes)
+        foreach (var (english, russian, color) in BasicLandTypes)
         {
             if (englishName.Equals(english, StringComparison.OrdinalIgnoreCase)
                 || localizedName.Equals(english, StringComparison.OrdinalIgnoreCase)
@@ -104,7 +104,7 @@ public static class CardLandClassification
 
     private static TypeTokens ParseTypeLine(string value)
     {
-        string[] tokens = (value ?? string.Empty)
+        string[] tokens = value
             .Split(
                 new[] { ' ', '\t', '\r', '\n', '-', '—', '–', '/', ',' },
                 StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
