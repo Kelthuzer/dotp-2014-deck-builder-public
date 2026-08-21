@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using DeckBuilder.Core.Models;
+using DeckBuilder.Core.Services;
 using DeckBuilder.Modern;
 
 internal static class XmasBasicLandChecks
@@ -41,6 +42,27 @@ internal static class XmasBasicLandChecks
             "A localized-only XMAS Plains must be recognized as a land.");
         True(Invoke<bool>(isBasicLand, localizedOnlyPlains),
             "A localized-only XMAS Plains must pass the basic-land filter used by random/auto land generation.");
+
+        CardRecord xmasCwPlains = new(
+            "PLAINS_CW_999005",
+            "Равнина XMAS",
+            "XMAS Plains variant",
+            string.Empty,
+            "XMAS",
+            string.Empty);
+        True(Invoke<HashSet<char>>(basicLandColors, xmasCwPlains).SetEquals(['W']),
+            "XMAS PLAINS_CW_<id> must be recognized as a white basic land.");
+        True(Invoke<bool>(isLand, xmasCwPlains),
+            "XMAS PLAINS_CW_<id> must be recognized as a land.");
+        True(Invoke<bool>(isBasicLand, xmasCwPlains),
+            "XMAS PLAINS_CW_<id> must pass the Modern basic-land filter.");
+
+        DeckDocument xmasDeck = new();
+        DeckEditor xmasEditor = new(xmasDeck);
+        for (int copy = 0; copy < 6; copy++)
+            xmasEditor.Add(xmasCwPlains, DeckSection.MainDeck);
+        True(xmasDeck.MainDeckCardCount == 6,
+            "DeckEditor must allow more than four copies of XMAS PLAINS_CW_<id> basic lands.");
 
         CardRecord nonBasicMountain = new(
             "MADBLIND_MOUNTAIN_999002",
