@@ -321,7 +321,7 @@ public partial class MainWindow
         if (fileName.StartsWith(normalPrefix, StringComparison.OrdinalIgnoreCase))
         {
             string suffix = fileName[normalPrefix.Length..];
-            if (suffix.Length > 0 && char.IsDigit(suffix[0]))
+            if (IsCanonicalBasicLandSuffix(suffix))
                 colors.Add(color);
             return;
         }
@@ -330,9 +330,20 @@ public partial class MainWindow
         if (fileName.StartsWith(explicitBasicPrefix, StringComparison.OrdinalIgnoreCase))
         {
             string suffix = fileName[explicitBasicPrefix.Length..];
-            if (suffix.Length > 0 && char.IsDigit(suffix[0]))
+            if (IsCanonicalBasicLandSuffix(suffix))
                 colors.Add(color);
         }
+    }
+
+    private static bool IsCanonicalBasicLandSuffix(string suffix)
+    {
+        if (suffix.Length > 0 && char.IsDigit(suffix[0]))
+            return true;
+
+        const string xmasCommunityPrefix = "CW_";
+        return suffix.StartsWith(xmasCommunityPrefix, StringComparison.OrdinalIgnoreCase)
+            && suffix.Length > xmasCommunityPrefix.Length
+            && char.IsDigit(suffix[xmasCommunityPrefix.Length]);
     }
 
     private static void AddExactBasicLandName(
