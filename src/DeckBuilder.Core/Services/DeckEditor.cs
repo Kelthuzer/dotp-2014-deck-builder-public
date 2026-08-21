@@ -1,3 +1,4 @@
+using System.IO;
 using DeckBuilder.Core.Models;
 
 namespace DeckBuilder.Core.Services;
@@ -122,18 +123,72 @@ public sealed class DeckEditor
 
     private static bool IsBasicLand(CardRecord card)
     {
-        if (!card.TypeLine.Contains("Land", StringComparison.OrdinalIgnoreCase)
-            && !card.TypeLine.Contains("Земл", StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        if (card.TypeLine.Contains("Basic", StringComparison.OrdinalIgnoreCase))
+        if (IsCanonicalBasicLandFileName(card.FileName))
             return true;
 
         string english = card.EnglishName.Trim();
-        return english.Equals("Plains", StringComparison.OrdinalIgnoreCase)
+        if (english.Equals("Plains", StringComparison.OrdinalIgnoreCase)
             || english.Equals("Island", StringComparison.OrdinalIgnoreCase)
             || english.Equals("Swamp", StringComparison.OrdinalIgnoreCase)
             || english.Equals("Mountain", StringComparison.OrdinalIgnoreCase)
-            || english.Equals("Forest", StringComparison.OrdinalIgnoreCase);
+            || english.Equals("Forest", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        string localized = card.LocalizedName.Trim();
+        if (localized.Equals("Равнина", StringComparison.OrdinalIgnoreCase)
+            || localized.Equals("Остров", StringComparison.OrdinalIgnoreCase)
+            || localized.Equals("Болото", StringComparison.OrdinalIgnoreCase)
+            || localized.Equals("Гора", StringComparison.OrdinalIgnoreCase)
+            || localized.Equals("Лес", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        bool isLand = card.TypeLine.Contains("Land", StringComparison.OrdinalIgnoreCase)
+            || card.TypeLine.Contains("Земл", StringComparison.OrdinalIgnoreCase);
+        if (!isLand)
+            return false;
+
+        return card.TypeLine.Contains("Basic", StringComparison.OrdinalIgnoreCase)
+            || card.TypeLine.Contains("Базов", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsCanonicalBasicLandFileName(string fileName)
+    {
+        string stem = (Path.GetFileNameWithoutExtension(fileName) ?? fileName).Trim();
+        foreach (string basicName in new[] { "PLAINS", "ISLAND", "SWAMP", "MOUNTAIN", "FOREST" })
+        {
+            if (stem.Equals(basicName, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            string normalPrefix = basicName + "_";
+            if (stem.StartsWith(normalPrefix, StringComparison.OrdinalIgnoreCase)
+                && IsCanonicalBasicLandSuffix(stem[normalPrefix.Length..]))
+            {
+                return true;
+            }
+
+            string explicitBasicPrefix = "BASIC_" + basicName + "_";
+            if (stem.StartsWith(explicitBasicPrefix, StringComparison.OrdinalIgnoreCase)
+                && IsCanonicalBasicLandSuffix(stem[explicitBasicPrefix.Length..]))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsCanonicalBasicLandSuffix(string suffix)
+    {
+        if (suffix.Length > 0 && char.IsDigit(suffix[0]))
+            return true;
+
+        const string xmasCommunityPrefix = "CW_";
+        return suffix.StartsWith(xmasCommunityPrefix, StringComparison.OrdinalIgnoreCase)
+            && suffix.Length > xmasCommunityPrefix.Length
+            && char.IsDigit(suffix[xmasCommunityPrefix.Length]);
     }
 }
