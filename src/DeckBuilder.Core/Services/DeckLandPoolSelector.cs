@@ -12,13 +12,13 @@ public static class DeckLandPoolSelector
 {
     private const int EntriesPerColour = 4;
 
-    private static readonly (DeckColourFlags Flag, string Prefix)[] LandTypes =
+    private static readonly (DeckColourFlags Flag, char Color, string Name)[] LandTypes =
     {
-        (DeckColourFlags.Green, "FOREST"),
-        (DeckColourFlags.Blue, "ISLAND"),
-        (DeckColourFlags.Red, "MOUNTAIN"),
-        (DeckColourFlags.White, "PLAINS"),
-        (DeckColourFlags.Black, "SWAMP")
+        (DeckColourFlags.Green, 'G', "forest"),
+        (DeckColourFlags.Blue, 'U', "island"),
+        (DeckColourFlags.Red, 'R', "mountain"),
+        (DeckColourFlags.White, 'W', "plains"),
+        (DeckColourFlags.Black, 'B', "swamp")
     };
 
     public static IReadOnlyList<CardRecord> Select(
@@ -29,28 +29,27 @@ public static class DeckLandPoolSelector
         ArgumentNullException.ThrowIfNull(catalog);
 
         DeckColourFlags colour = DeckColourCalculator.Calculate(deck);
-        string[] prefixes = LandTypes
+        (DeckColourFlags Flag, char Color, string Name)[] types = LandTypes
             .Where(type => DeckColourCalculator.Has(colour, type.Flag))
-            .Select(type => type.Prefix)
             .ToArray();
-        if (prefixes.Length == 0)
-            prefixes = LandTypes.Select(type => type.Prefix).ToArray();
+        if (types.Length == 0)
+            types = LandTypes;
 
         List<CardRecord> result = new();
-        foreach (string prefix in prefixes)
+        foreach ((_, char color, string name) in types)
         {
             DeckEntry? existing = deck.MainDeck
-                .Where(entry => entry.Card.FileName.StartsWith(prefix + "_", StringComparison.OrdinalIgnoreCase))
+                .Where(entry => IsBasicLandOfColor(entry.Card, color))
                 .OrderByDescending(entry => entry.Quantity)
                 .ThenBy(entry => entry.Card.FileName, StringComparer.OrdinalIgnoreCase)
                 .FirstOrDefault();
 
             CardRecord? preferred = existing?.Card ?? catalog
-                .Where(card => card.FileName.StartsWith(prefix + "_", StringComparison.OrdinalIgnoreCase))
+                .Where(card => IsBasicLandOfColor(card, color))
                 .OrderBy(card => card.FileName, StringComparer.OrdinalIgnoreCase)
                 .FirstOrDefault();
             if (preferred is null)
-                throw new InvalidOperationException($"No {prefix.ToLowerInvariant()} cards were found for the automatic land pool.");
+                throw new InvalidOperationException($"No {name} cards were found for the automatic land pool.");
 
             for (int index = 0; index < EntriesPerColour; index++)
                 result.Add(preferred);
@@ -58,4 +57,8 @@ public static class DeckLandPoolSelector
 
         return result;
     }
+
+    private static bool IsBasicLandOfColor(CardRecord card, char color) =>
+        CardLandClassification.IsBasicLand(card)
+        && CardLandClassification.BasicLandColors(card).Contains(color);
 }
