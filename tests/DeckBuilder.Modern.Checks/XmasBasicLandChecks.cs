@@ -54,6 +54,20 @@ internal static class XmasBasicLandChecks
         True(!Invoke<bool>(isBasicLand, nonBasicMountain),
             "A nonbasic Mountain must not pass the basic-land filter.");
 
+        CardRecord islandOfWakWak = new(
+            "ISLAND_OF_WAK_WAK_999004",
+            "Island of Wak-Wak",
+            "Island of Wak-Wak",
+            "Land Island",
+            "ARN",
+            string.Empty);
+        True(Invoke<HashSet<char>>(basicLandColors, islandOfWakWak).Count == 0,
+            "Island of Wak-Wak must not be classified as a basic Island just because its filename starts with ISLAND_.");
+        True(Invoke<bool>(isLand, islandOfWakWak),
+            "Island of Wak-Wak must still be recognized as a land.");
+        True(!Invoke<bool>(isBasicLand, islandOfWakWak),
+            "Island of Wak-Wak must remain subject to the normal constructed four-copy limit.");
+
         Console.WriteLine("PASS: XMAS basic-land recognition");
     }
 
