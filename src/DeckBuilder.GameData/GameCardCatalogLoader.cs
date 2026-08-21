@@ -28,53 +28,61 @@ public sealed class GameCardCatalogLoader
         IProgress<CatalogLoadProgress>? progress,
         CancellationToken cancellationToken)
     {
-        Dictionary<string, CardRecord> cards = new(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, CatalogCandidate> selected = new(StringComparer.OrdinalIgnoreCase);
         ConcurrentBag<string> warnings = new();
         int processed = 0;
 
-        foreach (string wadPath in Directory.EnumerateFiles(gameDirectory, "*.wad", SearchOption.TopDirectoryOnly)
-                     .Where(GameWadSelection.IsSupported)
-                     .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+        CatalogSource[] sources = EnumerateSources(gameDirectory)
+            .OrderBy(source => source.Order)
+            .ThenBy(source => source.Name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        foreach (CatalogSource source in sources)
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                foreach (CardRecord card in WadCardCatalogReader.Read(wadPath, cancellationToken))
+                if (source.IsDirectory)
                 {
-                    AddOrPrefer(cards, card);
+                    string cardDirectory = Path.Combine(source.Path, "DATA_ALL_PLATFORMS", "CARDS");
+                    foreach (string cardPath in Directory.EnumerateFiles(cardDirectory, "*.xml", SearchOption.TopDirectoryOnly)
+                                 .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        try
+                        {
+                            CardRecord? card = CardXmlParser.Parse(File.ReadAllText(cardPath), source.Name);
+                            if (card is not null)
+                            {
+                                AddOrPrefer(selected, card, source.Order, source.Name);
+                            }
+                        }
+                        catch (Exception exception)
+                        {
+                            warnings.Add($"{cardPath}: {exception.Message}");
+                        }
+                    }
+                }
+                else
+                {
+                    foreach (CardRecord card in WadCardCatalogReader.Read(source.Path, cancellationToken))
+                    {
+                        AddOrPrefer(selected, card, source.Order, source.Name);
+                    }
                 }
             }
             catch (Exception exception)
             {
-                warnings.Add($"{FileName(wadPath)}: {exception.Message}");
+                warnings.Add($"{source.Name}: {exception.Message}");
             }
 
-            progress?.Report(new CatalogLoadProgress(FileName(wadPath), ++processed, cards.Count));
+            progress?.Report(new CatalogLoadProgress(source.Name, ++processed, selected.Count));
         }
 
-        foreach (string directory in FindUnpackedWads(gameDirectory))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            string cardDirectory = Path.Combine(directory, "DATA_ALL_PLATFORMS", "CARDS");
-            foreach (string cardPath in Directory.EnumerateFiles(cardDirectory, "*.xml", SearchOption.TopDirectoryOnly))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                try
-                {
-                    CardRecord? card = CardXmlParser.Parse(File.ReadAllText(cardPath), FileName(directory));
-                    if (card is not null)
-                    {
-                        AddOrPrefer(cards, card);
-                    }
-                }
-                catch (Exception exception)
-                {
-                    warnings.Add($"{cardPath}: {exception.Message}");
-                }
-            }
-
-            progress?.Report(new CatalogLoadProgress(FileName(directory), ++processed, cards.Count));
-        }
+        Dictionary<string, CardRecord> cards = selected.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value.Card,
+            StringComparer.OrdinalIgnoreCase);
 
         RecoverReferencedCards(gameDirectory, cards, warnings, cancellationToken);
 
@@ -85,6 +93,28 @@ public sealed class GameCardCatalogLoader
                 .ThenBy(card => card.FileName, StringComparer.OrdinalIgnoreCase)
                 .ToArray(),
             warnings.OrderBy(value => value, StringComparer.OrdinalIgnoreCase).ToArray());
+    }
+
+    private static IEnumerable<CatalogSource> EnumerateSources(string gameDirectory)
+    {
+        foreach (string wadPath in Directory.EnumerateFiles(gameDirectory, "*.wad", SearchOption.TopDirectoryOnly)
+                     .Where(GameWadSelection.IsSupported))
+        {
+            yield return new CatalogSource(
+                wadPath,
+                FileName(wadPath),
+                GameContentLoadOrder.Read(wadPath),
+                IsDirectory: false);
+        }
+
+        foreach (string directory in FindUnpackedWads(gameDirectory))
+        {
+            yield return new CatalogSource(
+                directory,
+                FileName(directory),
+                GameContentLoadOrder.Read(directory),
+                IsDirectory: true);
+        }
     }
 
     private static void RecoverReferencedCards(
@@ -132,6 +162,30 @@ public sealed class GameCardCatalogLoader
         {
             warnings.Add($"Referenced-card recovery: {exception.Message}");
         }
+    }
+
+    private static void AddOrPrefer(
+        IDictionary<string, CatalogCandidate> cards,
+        CardRecord candidate,
+        int sourceOrder,
+        string sourceName)
+    {
+        if (!cards.TryGetValue(candidate.FileName, out CatalogCandidate? existing))
+        {
+            cards.Add(candidate.FileName, new CatalogCandidate(candidate, sourceOrder, sourceName));
+            return;
+        }
+
+        bool candidateWins = sourceOrder > existing.Order
+            || sourceOrder == existing.Order && DefinitionScore(candidate) > DefinitionScore(existing.Card);
+        CardRecord preferred = candidateWins ? candidate : existing.Card;
+        CardRecord alternate = candidateWins ? existing.Card : candidate;
+        int preferredOrder = candidateWins ? sourceOrder : existing.Order;
+        string preferredSource = candidateWins ? sourceName : existing.SourceName;
+        cards[candidate.FileName] = new CatalogCandidate(
+            MergeRussianLocalization(preferred, alternate),
+            preferredOrder,
+            preferredSource);
     }
 
     private static void AddOrPrefer(IDictionary<string, CardRecord> cards, CardRecord candidate)
@@ -193,8 +247,8 @@ public sealed class GameCardCatalogLoader
     {
         int score = 0;
 
-        // ARTID is the strongest signal that this is a complete playable card definition rather
-        // than a lightweight duplicate bundled only so another WAD can reference the card.
+        // DefinitionScore is only a tie-breaker within the same game load order. A later WAD
+        // order always wins first, matching the actual Magic 2014 content override model.
         if (!string.IsNullOrWhiteSpace(card.ImageId)) score += 120;
 
         if (HasMeaningfulName(card.LocalizedName, card.FileName)) score += 45;
@@ -258,7 +312,8 @@ public sealed class GameCardCatalogLoader
         foreach (string directory in Directory.EnumerateDirectories(gameDirectory, "*", SearchOption.TopDirectoryOnly))
         {
             if (GameWadSelection.IsSupported(directory)
-                && File.Exists(Path.Combine(directory, "header.xml"))
+                && Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly)
+                    .Any(file => Path.GetFileName(file).Equals("HEADER.XML", StringComparison.OrdinalIgnoreCase))
                 && Directory.Exists(Path.Combine(directory, "DATA_ALL_PLATFORMS", "CARDS")))
             {
                 yield return directory;
@@ -267,4 +322,7 @@ public sealed class GameCardCatalogLoader
     }
 
     private static string FileName(string path) => Path.GetFileName(path) ?? path;
+
+    private sealed record CatalogSource(string Path, string Name, int Order, bool IsDirectory);
+    private sealed record CatalogCandidate(CardRecord Card, int Order, string SourceName);
 }
