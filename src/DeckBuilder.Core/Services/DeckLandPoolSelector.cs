@@ -36,7 +36,7 @@ public static class DeckLandPoolSelector
             types = LandTypes;
 
         List<CardRecord> result = new();
-        foreach ((_, char color, string name) in types)
+        foreach (var (_, color, name) in types)
         {
             DeckEntry? existing = deck.MainDeck
                 .Where(entry => IsBasicLandOfColor(entry.Card, color))
