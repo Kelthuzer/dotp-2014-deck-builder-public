@@ -59,18 +59,18 @@ public partial class MainWindow
 
     private static bool IsBasicLand(CardRecord card)
     {
+        // BasicLandColors is deliberately strict for the five normal basics and already knows
+        // about XMAS filename/localized-name variants. Use it as the primary source of truth so
+        // random-deck and auto-land code do not reject a card after successfully identifying it.
+        if (BasicLandColors(card).Count > 0)
+            return true;
+
         if (!IsLand(card))
             return false;
 
-        if (card.TypeLine.Contains("Basic", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        string english = card.EnglishName.Trim();
-        return english.Equals("Plains", StringComparison.OrdinalIgnoreCase)
-            || english.Equals("Island", StringComparison.OrdinalIgnoreCase)
-            || english.Equals("Swamp", StringComparison.OrdinalIgnoreCase)
-            || english.Equals("Mountain", StringComparison.OrdinalIgnoreCase)
-            || english.Equals("Forest", StringComparison.OrdinalIgnoreCase);
+        // Preserve support for unusual/custom basic lands outside the normal WUBRG five.
+        return card.TypeLine.Contains("Basic", StringComparison.OrdinalIgnoreCase)
+            || card.TypeLine.Contains("Базов", StringComparison.OrdinalIgnoreCase);
     }
 
     private void AutoFillLands_Click(object sender, RoutedEventArgs e)
