@@ -8,6 +8,10 @@ internal static class XmasBasicLandChecks
     [ModuleInitializer]
     internal static void Initialize()
     {
+        MethodInfo basicLandColors = RequireStaticNonPublic("BasicLandColors");
+        MethodInfo isLand = RequireStaticNonPublic("IsLand");
+        MethodInfo isBasicLand = RequireStaticNonPublic("IsBasicLand");
+
         CardRecord xmasMountain = new(
             "MOUNTAIN_999001",
             "Гора",
@@ -16,16 +20,13 @@ internal static class XmasBasicLandChecks
             "XMAS",
             string.Empty);
 
-        HashSet<char> colors = MainWindow.BasicLandColors(xmasMountain);
-        True(colors.SetEquals(['R']), "XMAS MOUNTAIN_* must be recognized as a red basic land even when TypeLine is incomplete.");
-        True(MainWindow.IsLand(xmasMountain), "XMAS MOUNTAIN_* must be recognized as a land even when TypeLine is incomplete.");
-
-        MethodInfo isBasicLand = typeof(MainWindow).GetMethod(
-            "IsBasicLand",
-            BindingFlags.Static | BindingFlags.NonPublic)
-            ?? throw new MissingMethodException(typeof(MainWindow).FullName, "IsBasicLand");
-        bool basic = (bool)(isBasicLand.Invoke(null, [xmasMountain]) ?? false);
-        True(basic, "XMAS MOUNTAIN_* with the canonical English name must pass the basic-land filter used by random/auto land generation.");
+        HashSet<char> colors = Invoke<HashSet<char>>(basicLandColors, xmasMountain);
+        True(colors.SetEquals(['R']),
+            "XMAS MOUNTAIN_* must be recognized as a red basic land even when TypeLine is incomplete.");
+        True(Invoke<bool>(isLand, xmasMountain),
+            "XMAS MOUNTAIN_* must be recognized as a land even when TypeLine is incomplete.");
+        True(Invoke<bool>(isBasicLand, xmasMountain),
+            "XMAS MOUNTAIN_* with the canonical English name must pass the basic-land filter used by random/auto land generation.");
 
         CardRecord nonBasicMountain = new(
             "MADBLIND_MOUNTAIN_999002",
@@ -34,10 +35,22 @@ internal static class XmasBasicLandChecks
             "Land Mountain",
             "XMAS",
             string.Empty);
-        True(MainWindow.BasicLandColors(nonBasicMountain).Count == 0,
+        True(Invoke<HashSet<char>>(basicLandColors, nonBasicMountain).Count == 0,
             "A nonbasic card whose filename merely contains MOUNTAIN must not be classified as a basic Mountain.");
 
         Console.WriteLine("PASS: XMAS basic-land recognition");
+    }
+
+    private static MethodInfo RequireStaticNonPublic(string name) =>
+        typeof(MainWindow).GetMethod(name, BindingFlags.Static | BindingFlags.NonPublic)
+        ?? throw new MissingMethodException(typeof(MainWindow).FullName, name);
+
+    private static T Invoke<T>(MethodInfo method, CardRecord card)
+    {
+        object? value = method.Invoke(null, [card]);
+        return value is T typed
+            ? typed
+            : throw new InvalidOperationException($"{method.Name} returned {value?.GetType().FullName ?? "<null>"}, expected {typeof(T).FullName}.");
     }
 
     private static void True(bool condition, string message)
