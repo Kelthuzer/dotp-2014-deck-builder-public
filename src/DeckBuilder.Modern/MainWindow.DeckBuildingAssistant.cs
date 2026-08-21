@@ -311,11 +311,27 @@ public partial class MainWindow
         string basicName,
         char color)
     {
-        if (fileName.Equals(basicName, StringComparison.OrdinalIgnoreCase)
-            || fileName.StartsWith(basicName + "_", StringComparison.OrdinalIgnoreCase)
-            || fileName.StartsWith("BASIC_" + basicName + "_", StringComparison.OrdinalIgnoreCase))
+        if (fileName.Equals(basicName, StringComparison.OrdinalIgnoreCase))
         {
             colors.Add(color);
+            return;
+        }
+
+        string normalPrefix = basicName + "_";
+        if (fileName.StartsWith(normalPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            string suffix = fileName[normalPrefix.Length..];
+            if (suffix.Length > 0 && char.IsDigit(suffix[0]))
+                colors.Add(color);
+            return;
+        }
+
+        string explicitBasicPrefix = "BASIC_" + basicName + "_";
+        if (fileName.StartsWith(explicitBasicPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            string suffix = fileName[explicitBasicPrefix.Length..];
+            if (suffix.Length > 0 && char.IsDigit(suffix[0]))
+                colors.Add(color);
         }
     }
 
