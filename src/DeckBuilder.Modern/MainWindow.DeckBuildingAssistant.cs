@@ -261,7 +261,7 @@ public partial class MainWindow
     internal static HashSet<char> BasicLandColors(CardRecord card)
     {
         HashSet<char> colors = new();
-        string fileName = Path.GetFileNameWithoutExtension(card.FileName).Trim();
+        string fileName = (Path.GetFileNameWithoutExtension(card.FileName) ?? card.FileName).Trim();
 
         AddCanonicalBasicLandColor(colors, fileName, "PLAINS", 'W');
         AddCanonicalBasicLandColor(colors, fileName, "ISLAND", 'U');
